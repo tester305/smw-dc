@@ -240,7 +240,7 @@ if sprite_mark not in sprite_fn:
                                   "dc_obj_interlace ? spriteSize / 2 : spriteSize", 1)
     sprite_fn = sprite_fn.replace("if(PPU_objInterlace(ppu)) row =",
                                   "if(dc_obj_interlace) row =", 1)
-    if "PPU_objInterlace(ppu)" in sprite_fn or "PPU_objSize(ppu)" in sprite_fn:
+    if sprite_fn.count("PPU_objInterlace(ppu)") != 1 or sprite_fn.count("PPU_objSize(ppu)") != 1:
         sys.exit("ppu.c: not all sprite register reads were hoisted - update patch_smw.py")
     ppu = ppu[:sprite_start] + sprite_fn + ppu[sprite_end:]
     write(ppu_path, ppu)
