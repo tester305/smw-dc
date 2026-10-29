@@ -13,7 +13,7 @@ OBJS = $(addsuffix .o,$(addprefix $(SMW)/,$(SMW_SRC))) dc/dc_game.o dc/dc_platfo
 
 KOS_ROMDISK_DIR = romdisk
 # Upstream is written for x86 compilers: keep old-style C warnings from becoming errors on modern GCC.
-KOS_CFLAGS += -O2 -fno-strict-aliasing -include stddef.h \
+KOS_CFLAGS += -O3 -fno-strict-aliasing -include stddef.h \
 	-Idc -Idc/compat -I$(SMW) -I$(SMW)/src -DSYSTEM_VOLUME_MIXER_AVAILABLE=0 \
 	-Wno-error=incompatible-pointer-types -Wno-error=implicit-function-declaration \
 	-Wno-error=int-conversion -Wno-error=return-mismatch -w
