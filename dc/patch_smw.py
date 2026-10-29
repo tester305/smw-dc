@@ -210,3 +210,40 @@ if dirty_mark not in ppu:
     print("patch_smw: enabled write-invalidated palette cache")
 else:
     print("patch_smw: write-invalidated palette cache already present")
+
+
+# --- 6. hoist invariant OAM registers out of the per-sprite scan loop ------
+# These register fields cannot change while ppu_evaluateSprites() is running.
+# Read them once per scanline instead of re-extracting them for each of 128 OAM
+# entries. This preserves the existing sprite ordering and limits.
+ppu = read(ppu_path)
+sprite_eol = "\r\n" if "\r\n" in ppu else "\n"
+sprite_start = ppu.find("static bool ppu_evaluateSprites(Ppu* ppu, int line) {")
+sprite_end = ppu.find("static uint16_t ppu_getVramRemap(Ppu* ppu) {", sprite_start)
+if sprite_start < 0 or sprite_end < 0:
+    sys.exit("ppu.c: sprite evaluator anchors not found - update patch_smw.py")
+sprite_fn = ppu[sprite_start:sprite_end]
+sprite_mark = "/* DC-PATCH: hoisted sprite registers */"
+if sprite_mark not in sprite_fn:
+    sprite_anchor = "  uint8_t index = PPU_objPriority(ppu) ? (ppu->oamaddl & 0xfe) : 0;"
+    if sprite_anchor not in sprite_fn:
+        sys.exit("ppu.c: sprite loop anchor not found - update patch_smw.py")
+    sprite_fn = sprite_fn.replace(
+        sprite_anchor,
+        "  " + sprite_mark + sprite_eol +
+        "  const uint8_t dc_obj_size = PPU_objSize(ppu);" + sprite_eol +
+        "  const bool dc_obj_interlace = PPU_objInterlace(ppu);" + sprite_eol +
+        sprite_anchor, 1)
+    sprite_fn = sprite_fn.replace("spriteSizes[PPU_objSize(ppu)]",
+                                  "spriteSizes[dc_obj_size]", 1)
+    sprite_fn = sprite_fn.replace("PPU_objInterlace(ppu) ? spriteSize / 2 : spriteSize",
+                                  "dc_obj_interlace ? spriteSize / 2 : spriteSize", 1)
+    sprite_fn = sprite_fn.replace("if(PPU_objInterlace(ppu)) row =",
+                                  "if(dc_obj_interlace) row =", 1)
+    if "PPU_objInterlace(ppu)" in sprite_fn or "PPU_objSize(ppu)" in sprite_fn:
+        sys.exit("ppu.c: not all sprite register reads were hoisted - update patch_smw.py")
+    ppu = ppu[:sprite_start] + sprite_fn + ppu[sprite_end:]
+    write(ppu_path, ppu)
+    print("patch_smw: hoisted sprite-size/interlace reads")
+else:
+    print("patch_smw: sprite-register hoisting already present")
