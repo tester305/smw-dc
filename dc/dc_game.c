@@ -192,9 +192,13 @@ int main(int argc, char **argv) {
 
     if (!skip_now) {
       g_rtl_game_info->draw_ppu_frame();
+      uint64_t t_ppu = dc_time_us();
+
       ConvertFrame();
       uint64_t t2 = dc_time_us();
-      draw_us = (uint32_t)(t2 - t1);
+
+      logic_us = (uint32_t)(t_ppu - t1);
+      draw_us = (uint32_t)(t2 - t_ppu);
       if (show_perf) {
         DrawNumber(4, 4, (int)(logic_us / 100), 0xFFFF);
         DrawNumber(4, 18, (int)(draw_us / 100), 0x07FF);
