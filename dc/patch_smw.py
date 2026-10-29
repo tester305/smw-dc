@@ -123,10 +123,41 @@ if ppu_mark not in ppu:
         "  }" + ppu_eol + ppu_eol
     )
     ppu = ppu.replace(dst_anchor, cache_code + dst_anchor, 1)
-    ppu = ppu.replace(old_pixel,
-        "        dst[0] = dc_palette_rgb[clip_color_mask != 0][ppu->bgBuffers[0].data[i] & 0xff];",
-        1)
+    # Replace the per-pixel palette conversion with a four-pixel unrolled loop.
+    # The RGB lookup removes channel math; unrolling cuts loop/control overhead on SH-4.
+    old_loop = (
+        "      uint32 i = left;" + ppu_eol +
+        "      do {" + ppu_eol +
+        old_pixel + ppu_eol +
+        "      } while (dst++, ++i < right);"
+    )
+    if old_loop not in ppu:
+        sys.exit("ppu.c: fast pixel loop anchor not found - upstream changed, update patch_smw.py")
+
+    fast_loop = ppu_eol.join([
+        "      uint32 i = left;",
+        "      uint32_t *rgb = dc_palette_rgb[clip_color_mask != 0];",
+        "      if (i < right) {",
+        "        while (i + 3 < right) {",
+        "          dst[0] = rgb[ppu->bgBuffers[0].data[i + 0] & 0xff];",
+        "          dst[1] = rgb[ppu->bgBuffers[0].data[i + 1] & 0xff];",
+        "          dst[2] = rgb[ppu->bgBuffers[0].data[i + 2] & 0xff];",
+        "          dst[3] = rgb[ppu->bgBuffers[0].data[i + 3] & 0xff];",
+        "          dst += 4;",
+        "          i += 4;",
+        "        }",
+        "        while (i < right) {",
+        "          *dst++ = rgb[ppu->bgBuffers[0].data[i] & 0xff];",
+        "          i++;",
+        "        }",
+        "      } else {",
+        "        /* Preserve upstream's do-while behavior for an empty range. */",
+        "        *dst++ = rgb[ppu->bgBuffers[0].data[i] & 0xff];",
+        "      }",
+        "    } else {",
+    ])
+    ppu = ppu.replace(old_loop + ppu_eol + "    } else {", fast_loop, 1)
     write(ppu_path, ppu)
-    print("patch_smw: enabled cached palette RGB conversion")
+    print("patch_smw: enabled cached palette RGB conversion + four-pixel loop")
 else:
     print("patch_smw: cached palette RGB conversion already present")
