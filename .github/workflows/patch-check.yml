@@ -1,0 +1,34 @@
+name: Check Dreamcast source patch
+
+on:
+  pull_request:
+    paths:
+      - "dc/patch_smw.py"
+      - ".github/workflows/patch-check.yml"
+  workflow_dispatch:
+
+jobs:
+  patch-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Dreamcast port
+        uses: actions/checkout@v4
+
+      - name: Check patch script syntax
+        run: python3 -m py_compile dc/patch_smw.py
+
+      - name: Fetch pinned upstream source
+        run: |
+          git init -q smw
+          git -C smw remote add origin https://github.com/snesrev/smw.git
+          git -C smw fetch -q --depth 1 origin eae20c65c58930c8b62c76188d259579ad4130f1
+          git -C smw checkout -q -f FETCH_HEAD
+
+      - name: Apply patch twice and verify idempotence
+        run: |
+          python3 dc/patch_smw.py smw
+          git -C smw diff --binary > /tmp/patch-first.diff
+          python3 dc/patch_smw.py smw
+          git -C smw diff --binary > /tmp/patch-second.diff
+          cmp /tmp/patch-first.diff /tmp/patch-second.diff
