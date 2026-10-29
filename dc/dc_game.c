@@ -219,16 +219,17 @@ int main(int argc, char **argv) {
       ConvertFrame();
       uint64_t t2 = dc_time_us();
 
-      logic_us = (uint32_t)(t_ppu - t1);
-      draw_us = (uint32_t)(t2 - t_ppu);
+      /* Keep game/CPU time separate from PPU rendering + RGB565 conversion. */
+      draw_us = (uint32_t)(t2 - t1);
       if (show_perf) {
         DrawNumber(4, 4, (int)(logic_us / 100), 0xFFFF);
         DrawNumber(4, 18, (int)(draw_us / 100), 0x07FF);
         DrawNumber(4, 32, (int)skipped, 0xFFE0);
       }
       dc_present(g_fb);
-      /* Too slow to make the next vblank? drop the next picture, keep game speed. */
-      skip_now = (t2 - t0) > (kFrameUs - 1200);
+      uint64_t t3 = dc_time_us();
+      /* Include presentation/upload overhead in the frame budget too. */
+      skip_now = (t3 - t0) > (kFrameUs - 1200);
     } else {
       dc_wait_vbl();
       skipped++;
