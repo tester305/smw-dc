@@ -114,9 +114,16 @@ static void ConvertFrame(void) {
   const uint32_t *src = (const uint32_t *)g_my_pixels;
   uint16_t *dst = g_fb;
   for (int y = 0; y < 224; y++) {
-    for (int x = 0; x < 256; x++) {
-      uint32_t p = src[x];
-      dst[x] = (uint16_t)(((p >> 8) & 0xF800) | ((p >> 5) & 0x07E0) | ((p >> 3) & 0x001F));
+    for (int x = 0; x < 256; x += 4) {
+      uint32_t p0 = src[x + 0];
+      uint32_t p1 = src[x + 1];
+      uint32_t p2 = src[x + 2];
+      uint32_t p3 = src[x + 3];
+
+      dst[x + 0] = (uint16_t)(((p0 >> 8) & 0xF800) | ((p0 >> 5) & 0x07E0) | ((p0 >> 3) & 0x001F));
+      dst[x + 1] = (uint16_t)(((p1 >> 8) & 0xF800) | ((p1 >> 5) & 0x07E0) | ((p1 >> 3) & 0x001F));
+      dst[x + 2] = (uint16_t)(((p2 >> 8) & 0xF800) | ((p2 >> 5) & 0x07E0) | ((p2 >> 3) & 0x001F));
+      dst[x + 3] = (uint16_t)(((p3 >> 8) & 0xF800) | ((p3 >> 5) & 0x07E0) | ((p3 >> 3) & 0x001F));
     }
     src += 256;
     dst += 256;
