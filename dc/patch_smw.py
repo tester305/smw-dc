@@ -66,3 +66,19 @@ for rel in files:
         write(path, s)
         changed += 1
 print(f"patch_smw: {changed} files updated")
+
+# --- 3. avoid collision with KallistiOS's hardware dma_init ---------------
+# All C/header files here belong to the upstream SNES emulator, so rename
+# its symbol and every declaration/call without touching KallistiOS.
+dma_symbol = re.compile(r"\bdma_init\b")
+dma_changed = 0
+
+for path in root.rglob("*"):
+    if path.is_file() and path.suffix in {".c", ".h"}:
+        s = read(path)
+        patched = dma_symbol.sub("snes_dma_init", s)
+        if patched != s:
+            write(path, patched)
+            dma_changed += 1
+
+print(f"patch_smw: renamed SNES dma_init in {dma_changed} files")
