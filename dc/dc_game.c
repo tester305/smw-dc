@@ -214,8 +214,6 @@ int main(int argc, char **argv) {
 
     if (!skip_now) {
       g_rtl_game_info->draw_ppu_frame();
-      uint64_t t_ppu = dc_time_us();
-
       ConvertFrame();
       uint64_t t2 = dc_time_us();
 
