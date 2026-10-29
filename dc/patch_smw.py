@@ -168,6 +168,7 @@ else:
 # operations also invalidate it. This avoids scanning all 256 palette entries
 # on every rendered line while retaining a full refresh whenever state changes.
 ppu = read(ppu_path)
+eol = "\\r\\n" if "\\r\\n" in ppu else "\\n"
 dirty_mark = "/* DC-PATCH: palette cache dirty flag */"
 if dirty_mark not in ppu:
     global_anchor = "Ppu* ppu_init(void) {"
