@@ -82,3 +82,51 @@ for path in root.rglob("*"):
             dma_changed += 1
 
 print(f"patch_smw: renamed SNES dma_init in {dma_changed} files")
+# --- 4. cache palette-to-RGB conversion in the PPU scanline compositor ----
+ppu_path = root / "src/snes/ppu.c"
+ppu = read(ppu_path)
+ppu_mark = "/* DC-PATCH: cached palette RGB */"
+
+if ppu_mark not in ppu:
+    ppu_eol = "\r\n" if "\r\n" in ppu else "\n"
+    dst_anchor = "  uint32 *dst = (uint32*)&ppu->renderBuffer[(y - 1) * ppu->renderPitch], *dst_org = dst;"
+    old_pixel = (
+        "        uint32 color = ppu->cgram[ppu->bgBuffers[0].data[i] & 0xff];" + ppu_eol +
+        "        dst[0] = ppu->brightnessMult[color & clip_color_mask] << 16 |" + ppu_eol +
+        "          ppu->brightnessMult[(color >> 5) & clip_color_mask] << 8 |" + ppu_eol +
+        "          ppu->brightnessMult[(color >> 10) & clip_color_mask];"
+    )
+    if dst_anchor not in ppu or old_pixel not in ppu:
+        sys.exit("ppu.c: palette-cache anchors not found - upstream changed, update patch_smw.py")
+
+    cache_code = ppu_mark + ppu_eol + (
+        "  static Ppu *dc_palette_cache_ppu;" + ppu_eol +
+        "  static uint16_t dc_palette_cache_cgram[256];" + ppu_eol +
+        "  static uint8_t dc_palette_cache_brightness[sizeof(((Ppu *)0)->brightnessMult)];" + ppu_eol +
+        "  static uint32_t dc_palette_rgb[2][256];" + ppu_eol +
+        "  static bool dc_palette_cache_valid;" + ppu_eol +
+        "  if (!dc_palette_cache_valid || dc_palette_cache_ppu != ppu ||" + ppu_eol +
+        "      memcmp(dc_palette_cache_cgram, ppu->cgram, sizeof(ppu->cgram)) != 0 ||" + ppu_eol +
+        "      memcmp(dc_palette_cache_brightness, ppu->brightnessMult, sizeof(ppu->brightnessMult)) != 0) {" + ppu_eol +
+        "    for (uint32_t c = 0; c < 256; c++) {" + ppu_eol +
+        "      uint32_t color = ppu->cgram[c];" + ppu_eol +
+        "      dc_palette_rgb[0][c] = 0;  /* clip mask 0 makes all RGB channels zero */" + ppu_eol +
+        "      dc_palette_rgb[1][c] =" + ppu_eol +
+        "          (uint32_t)ppu->brightnessMult[color & 0x1f] << 16 |" + ppu_eol +
+        "          (uint32_t)ppu->brightnessMult[(color >> 5) & 0x1f] << 8 |" + ppu_eol +
+        "          (uint32_t)ppu->brightnessMult[(color >> 10) & 0x1f];" + ppu_eol +
+        "    }" + ppu_eol +
+        "    memcpy(dc_palette_cache_cgram, ppu->cgram, sizeof(ppu->cgram));" + ppu_eol +
+        "    memcpy(dc_palette_cache_brightness, ppu->brightnessMult, sizeof(ppu->brightnessMult));" + ppu_eol +
+        "    dc_palette_cache_ppu = ppu;" + ppu_eol +
+        "    dc_palette_cache_valid = true;" + ppu_eol +
+        "  }" + ppu_eol + ppu_eol
+    )
+    ppu = ppu.replace(dst_anchor, cache_code + dst_anchor, 1)
+    ppu = ppu.replace(old_pixel,
+        "        dst[0] = dc_palette_rgb[clip_color_mask != 0][ppu->bgBuffers[0].data[i] & 0xff];",
+        1)
+    write(ppu_path, ppu)
+    print("patch_smw: enabled cached palette RGB conversion")
+else:
+    print("patch_smw: cached palette RGB conversion already present")
