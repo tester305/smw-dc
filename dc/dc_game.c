@@ -110,7 +110,22 @@ static uint8 g_pixels[256 * 4 * 240] __attribute__((aligned(32)));     /* emulat
 static uint8 g_my_pixels[256 * 4 * 240] __attribute__((aligned(32)));  /* game PPU */
 static uint16_t g_fb[256 * 256] __attribute__((aligned(32)));          /* RGB565 texture source */
 
+/* Small hot lookup tables keep the 57,344-pixel conversion loop cheap. */
+static uint16_t g_rgb565_r[256];
+static uint16_t g_rgb565_g[256];
+static uint16_t g_rgb565_b[256];
+static int g_rgb565_tables_ready;
+
 static void ConvertFrame(void) {
+  if (!g_rgb565_tables_ready) {
+    for (unsigned i = 0; i < 256; i++) {
+      g_rgb565_r[i] = (uint16_t)((i >> 3) << 11);
+      g_rgb565_g[i] = (uint16_t)((i >> 2) << 5);
+      g_rgb565_b[i] = (uint16_t)(i >> 3);
+    }
+    g_rgb565_tables_ready = 1;
+  }
+
   const uint32_t *src = (const uint32_t *)g_my_pixels;
   uint16_t *dst = g_fb;
   for (int y = 0; y < 224; y++) {
@@ -120,10 +135,10 @@ static void ConvertFrame(void) {
       uint32_t p2 = src[x + 2];
       uint32_t p3 = src[x + 3];
 
-      dst[x + 0] = (uint16_t)(((p0 >> 8) & 0xF800) | ((p0 >> 5) & 0x07E0) | ((p0 >> 3) & 0x001F));
-      dst[x + 1] = (uint16_t)(((p1 >> 8) & 0xF800) | ((p1 >> 5) & 0x07E0) | ((p1 >> 3) & 0x001F));
-      dst[x + 2] = (uint16_t)(((p2 >> 8) & 0xF800) | ((p2 >> 5) & 0x07E0) | ((p2 >> 3) & 0x001F));
-      dst[x + 3] = (uint16_t)(((p3 >> 8) & 0xF800) | ((p3 >> 5) & 0x07E0) | ((p3 >> 3) & 0x001F));
+      dst[x + 0] = g_rgb565_r[(p0 >> 16) & 0xff] | g_rgb565_g[(p0 >> 8) & 0xff] | g_rgb565_b[p0 & 0xff];
+      dst[x + 1] = g_rgb565_r[(p1 >> 16) & 0xff] | g_rgb565_g[(p1 >> 8) & 0xff] | g_rgb565_b[p1 & 0xff];
+      dst[x + 2] = g_rgb565_r[(p2 >> 16) & 0xff] | g_rgb565_g[(p2 >> 8) & 0xff] | g_rgb565_b[p2 & 0xff];
+      dst[x + 3] = g_rgb565_r[(p3 >> 16) & 0xff] | g_rgb565_g[(p3 >> 8) & 0xff] | g_rgb565_b[p3 & 0xff];
     }
     src += 256;
     dst += 256;
