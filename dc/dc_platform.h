@@ -22,6 +22,7 @@ int  dc_init(void);                                  /* video mode + PVR + textu
 void dc_present(const uint16_t *rgb565_256x256);     /* upload a 256x256 RGB565 image and show it */
 void dc_wait_vbl(void);
 uint32_t dc_read_pad(int port, int *quit, int *present); /* SNES-layout bits; *quit set on A+B+X+Y+Start */
+int dc_perf_toggle_pressed(int port);
 int  dc_audio_start(dc_audio_fill_fn fn, int rate);  /* stereo, 16-bit; 0 = ok */
 void dc_audio_poll(void);
 void dc_audio_stop(void);

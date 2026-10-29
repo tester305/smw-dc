@@ -171,7 +171,7 @@ int main(int argc, char **argv) {
     Die("Audio initialisation failed");
 
   const uint64_t kFrameUs = 16667;
-  int quit = 0, show_perf = 0, prev_combo = 0, skip_now = 0;
+  int quit = 0, show_perf = 0, skip_now = 0;
   uint32_t logic_us = 0, draw_us = 0, skipped = 0;
 
   while (!quit) {
@@ -182,10 +182,8 @@ int main(int argc, char **argv) {
     uint32_t pad2 = dc_read_pad(1, NULL, &p2);
     uint32_t inputs = pad1 | (pad2 << 12) | ((uint32_t)((p1 ? 1 : 0) | (p2 ? 2 : 0)) << 30);
 
-    int combo = (pad1 & (DC_PAD_A | DC_PAD_B | DC_PAD_X | DC_PAD_Y)) ==
-                (DC_PAD_A | DC_PAD_B | DC_PAD_X | DC_PAD_Y);
-    if (combo && !prev_combo) show_perf = !show_perf;
-    prev_combo = combo;
+    if (dc_perf_toggle_pressed(0))
+      show_perf = !show_perf;
 
     RtlRunFrame(inputs);
     dc_audio_poll();

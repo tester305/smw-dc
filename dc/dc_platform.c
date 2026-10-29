@@ -128,6 +128,18 @@ uint32_t dc_read_pad(int port, int *quit, int *present) {
   return pad;
 }
 
+int dc_perf_toggle_pressed(int port) {
+  static uint8_t was_pressed[4] = {0};
+  if (port < 0 || port >= 4) return 0;
+  maple_device_t *dev = maple_enum_type(port, MAPLE_FUNC_CONTROLLER);
+  cont_state_t *st = dev ? (cont_state_t *)maple_dev_status(dev) : NULL;
+  if (!st) { was_pressed[port] = 0; return 0; }
+  int pressed = (st->buttons & (CONT_START | CONT_Y)) == (CONT_START | CONT_Y);
+  int triggered = pressed && !was_pressed[port];
+  was_pressed[port] = (uint8_t)pressed;
+  return triggered;
+}
+
 static void *audio_cb(snd_stream_hnd_t hnd, int req_bytes, int *got_bytes) {
   int frames = req_bytes / 4;
   (void)hnd;
