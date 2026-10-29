@@ -168,32 +168,32 @@ else:
 # operations also invalidate it. This avoids scanning all 256 palette entries
 # on every rendered line while retaining a full refresh whenever state changes.
 ppu = read(ppu_path)
-eol = "\\r\\n" if "\\r\\n" in ppu else "\\n"
+eol = "\r\n" if "\r\n" in ppu else "\n"
 dirty_mark = "/* DC-PATCH: palette cache dirty flag */"
 if dirty_mark not in ppu:
     global_anchor = "Ppu* ppu_init(void) {"
     if global_anchor not in ppu:
         sys.exit("ppu.c: ppu_init anchor not found - upstream changed, update patch_smw.py")
     ppu = ppu.replace(global_anchor,
-        dirty_mark + "\nstatic bool dc_palette_cache_dirty = true;\n\n" + global_anchor, 1)
+        dirty_mark + eol + "static bool dc_palette_cache_dirty = true;" + eol + eol + global_anchor, 1)
 
     cache_compare = "memcmp(dc_palette_cache_cgram, ppu->cgram, sizeof(ppu->cgram)) != 0 ||"
     if cache_compare not in ppu:
         sys.exit("ppu.c: palette cache comparison anchor not found - update patch_smw.py")
     ppu = ppu.replace(cache_compare, "dc_palette_cache_dirty ||", 1)
-    ppu = ppu.replace("  static uint16_t dc_palette_cache_cgram[256];\n", "", 1)
-    ppu = ppu.replace("    memcpy(dc_palette_cache_cgram, ppu->cgram, sizeof(ppu->cgram));\n", "", 1)
+    ppu = re.sub(r"^[ \t]*static uint16_t dc_palette_cache_cgram\[256\];\r?\n", "", ppu, count=1, flags=re.M)
+    ppu = re.sub(r"^[ \t]*memcpy\(dc_palette_cache_cgram, ppu->cgram, sizeof\(ppu->cgram\)\);\r?\n", "", ppu, count=1, flags=re.M)
     cache_ready = "    dc_palette_cache_valid = true;"
     if cache_ready not in ppu:
         sys.exit("ppu.c: palette cache refresh anchor not found - update patch_smw.py")
     ppu = ppu.replace(cache_ready,
-        "    dc_palette_cache_dirty = false;\n" + cache_ready, 1)
+        "    dc_palette_cache_dirty = false;" + eol + cache_ready, 1)
 
     cgram_write = "        ppu->cgram[ppu->cgramPointer++] = (val << 8) | ppu->cgramBuffer;"
     if cgram_write not in ppu:
         sys.exit("ppu.c: CGRAM write anchor not found - update patch_smw.py")
     ppu = ppu.replace(cgram_write,
-        cgram_write + "\n        dc_palette_cache_dirty = true;", 1)
+        cgram_write + eol + "        dc_palette_cache_dirty = true;", 1)
 
     # These operations can replace CGRAM without going through register 0x22.
     for anchor, label in [
@@ -203,7 +203,7 @@ if dirty_mark not in ppu:
     ]:
         if anchor not in ppu:
             sys.exit("ppu.c: " + label + " invalidation anchor not found - update patch_smw.py")
-        ppu = ppu.replace(anchor, anchor + "\n" + ("  " if label != "ppu_reset" else "    ") +
+        ppu = ppu.replace(anchor, anchor + eol + ("  " if label != "ppu_reset" else "    ") +
                           "dc_palette_cache_dirty = true;", 1)
 
     write(ppu_path, ppu)
