@@ -1,0 +1,123 @@
+name: Build Dreamcast ELF
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential texinfo libjpeg-dev libpng-dev libelf-dev \
+            git subversion python3 wget curl gettext bison flex libgmp-dev libmpfr-dev libmpc-dev \
+            meson ninja-build pkg-config libisofs-dev gnupg
+
+      - name: Clone KallistiOS and create environ.sh
+        run: |
+          sudo mkdir -p /opt/toolchains/dc
+          sudo chown -R "$USER":"$USER" /opt/toolchains
+          git clone --depth 1 https://github.com/KallistiOS/KallistiOS.git /opt/toolchains/dc/kos
+          cp /opt/toolchains/dc/kos/doc/environ.sh.sample /opt/toolchains/dc/kos/environ.sh
+
+      - name: Restore cached SH-4 toolchain
+        id: tc
+        uses: actions/cache/restore@v4
+        with:
+          path: /opt/toolchains/dc/sh-elf
+          key: kos-sh-elf-stable-ubuntu24-v1
+
+      - name: Build SH-4 toolchain (first run only)
+        if: steps.tc.outputs.cache-hit != 'true'
+        run: |
+          cd /opt/toolchains/dc/kos/utils/kos-chain
+          cp Makefile.dreamcast.cfg Makefile.cfg
+          sed -i "s/^makejobs=.*/makejobs=$(nproc)/" Makefile.cfg
+          make
+
+      - name: Save toolchain to cache
+        if: steps.tc.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /opt/toolchains/dc/sh-elf
+          key: kos-sh-elf-stable-ubuntu24-v1
+
+      - name: Build KallistiOS
+        run: |
+          . /opt/toolchains/dc/kos/environ.sh
+          cd "$KOS_BASE"
+          make -j"$(nproc)"
+
+      # The ROM never goes in the log. Either commit smw.sfc to a PRIVATE repo, or commit
+      # smw.sfc.gpg (gpg --symmetric --cipher-algo AES256 smw.sfc) and put the passphrase in
+      # the SMW_ROM_PASSPHRASE secret. (A plain secret is capped at 48 KB; the ROM is 512 KB.)
+      - name: Get the game ROM
+        env:
+          SMW_ROM_PASSPHRASE: ${{ secrets.SMW_ROM_PASSPHRASE }}
+        run: |
+          if [ -f smw.sfc ]; then
+            echo "Using smw.sfc from the repository"
+          elif [ -f smw.sfc.gpg ] && [ -n "$SMW_ROM_PASSPHRASE" ]; then
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$SMW_ROM_PASSPHRASE" -o smw.sfc -d smw.sfc.gpg
+          else
+            echo "::error::No ROM: add smw.sfc (private repo) or smw.sfc.gpg + SMW_ROM_PASSPHRASE secret"
+            exit 1
+          fi
+
+      - name: Build SNES Mario for Dreamcast
+        run: |
+          . /opt/toolchains/dc/kos/environ.sh
+          ./build.sh smw.sfc
+          rm -f smw.sfc
+          test -s smw_dc.elf
+
+      - name: Upload ELF
+        uses: actions/upload-artifact@v4
+        with:
+          name: smw_dc_elf
+          path: smw_dc.elf
+          if-no-files-found: error
+
+      - name: Build mkdcdisc
+        run: |
+          git clone --depth 1 https://gitlab.com/simulant/mkdcdisc.git "$HOME/mkdcdisc"
+          cd "$HOME/mkdcdisc"
+          meson setup builddir
+          meson compile -C builddir
+          test -x builddir/mkdcdisc
+
+      - name: Create padded, CD-R-ready CDI
+        run: |
+          "$HOME/mkdcdisc/builddir/mkdcdisc" -e smw_dc.elf -o smw_dc_burn_ready.cdi -n "SMW"
+          test -s smw_dc_burn_ready.cdi
+          ls -lh smw_dc_burn_ready.cdi
+
+      - name: Upload padded CDI
+        uses: actions/upload-artifact@v4
+        with:
+          name: smw_dc_cdi_burn_ready
+          path: smw_dc_burn_ready.cdi
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Create compact, unpadded CDI
+        run: |
+          "$HOME/mkdcdisc/builddir/mkdcdisc" -N -e smw_dc.elf -o smw_dc.cdi -n "SMW"
+          test -s smw_dc.cdi
+          ls -lh smw_dc.cdi
+
+      - name: Upload compact CDI
+        uses: actions/upload-artifact@v4
+        with:
+          name: smw_dc_cdi_compact
+          path: smw_dc.cdi
+          if-no-files-found: error
+          compression-level: 0

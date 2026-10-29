@@ -1,0 +1,7 @@
+smw/
+romdisk/
+*.o
+*.elf
+*.cdi
+*.sfc
+smw_assets.dat
