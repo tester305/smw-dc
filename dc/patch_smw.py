@@ -249,6 +249,133 @@ else:
     print("patch_smw: sprite-register hoisting already present")
 
 
+# --- 7. use a compact LUT to decode 4bpp planar pixels ----------------------
+# A tile row stores the four bitplanes in four bytes. Expand each byte into
+# eight 4-bit pixels once, rather than repeating four bit extractions for
+# every pixel in the inner background/sprite loops.
+ppu = read(ppu_path)
+planar_mark = "/* DC-PATCH: SH-4 4bpp pixel LUT */"
+if planar_mark not in ppu:
+    planar_code = [
+        planar_mark,
+        "static uint32_t dc_planar_pixel_lut[4][256];",
+        "static bool dc_planar_pixel_lut_ready;",
+        "",
+        "static void dc_init_planar_pixel_lut(void) {",
+        "  if (dc_planar_pixel_lut_ready) return;",
+        "  for (unsigned plane = 0; plane < 4; plane++) {",
+        "    for (unsigned value = 0; value < 256; value++) {",
+        "      uint32_t packed = 0;",
+        "      for (unsigned pixel = 0; pixel < 8; pixel++)",
+        "        if (value & (1u << pixel))",
+        "          packed |= 1u << (pixel * 4 + plane);",
+        "      dc_planar_pixel_lut[plane][value] = packed;",
+        "    }",
+        "  }",
+        "  dc_planar_pixel_lut_ready = true;",
+        "}",
+        "",
+        "static inline uint32_t dc_decode_4bpp(uint32_t planes) {",
+        "  return dc_planar_pixel_lut[0][planes & 0xff] |",
+        "         dc_planar_pixel_lut[1][(planes >> 8) & 0xff] |",
+        "         dc_planar_pixel_lut[2][(planes >> 16) & 0xff] |",
+        "         dc_planar_pixel_lut[3][planes >> 24];",
+        "}",
+        "",
+        "Ppu* ppu_init(void) {",
+    ]
+    helper = eol.join(planar_code)
+    init_anchor = "Ppu* ppu_init(void) {" 
+    if ppu.count(init_anchor) != 1:
+        sys.exit("ppu.c: ppu_init anchor not found or ambiguous")
+    ppu = ppu.replace(init_anchor, helper, 1)
+    alloc_anchor = "Ppu* ppu_init(void) {" + eol + "  Ppu* ppu = malloc(sizeof(Ppu));"
+    if alloc_anchor not in ppu:
+        sys.exit("ppu.c: ppu_init allocation anchor not found")
+    ppu = ppu.replace(alloc_anchor,
+        "Ppu* ppu_init(void) {" + eol +
+        "  dc_init_planar_pixel_lut();" + eol +
+        "  Ppu* ppu = malloc(sizeof(Ppu));", 1)
+
+    # Accelerate the full, aligned 8-pixel tile path. Keep the clipped-edge
+    # path untouched because it shifts the source bitplanes after each pixel.
+    bg_start = ppu.find("static void PpuDrawBackground_4bpp(Ppu *ppu, uint y, bool sub, uint layer, PpuZbufType zhi, PpuZbufType zlo) {")
+    bg_end = ppu.find("// Draw a whole line of a 2bpp background layer", bg_start)
+    if bg_start < 0 or bg_end < 0:
+        sys.exit("ppu.c: 4bpp background function anchors not found")
+    bg_fn = ppu[bg_start:bg_end]
+    macro_anchor = "#define READ_BITS(ta, tile)"
+    fast_macros = eol.join([
+        "#define DO_PIXEL_FAST(i) do { \\",
+        "  pixel = (dc_pixels >> ((i) * 4)) & 0xf; \\",
+        "  if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)",
+        "#define DO_PIXEL_FAST_HFLIP(i) do { \\",
+        "  pixel = (dc_pixels >> ((7 - (i)) * 4)) & 0xf; \\",
+        "  if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)",
+        macro_anchor
+    ])
+    if bg_fn.count(macro_anchor) != 1:
+        sys.exit("ppu.c: 4bpp macro insertion anchor not found")
+    bg_fn = bg_fn.replace(macro_anchor, fast_macros, 1)
+
+    old_middle = eol.join([
+        "      uint32 bits = READ_BITS(ta, tile & 0x3ff);",
+        "      if (bits) {",
+        "        z += ((tile & 0x1c00) >> kPaletteShift);",
+        "        if (tile & 0x4000) {",
+        "          DO_PIXEL(0); DO_PIXEL(1); DO_PIXEL(2); DO_PIXEL(3);",
+        "          DO_PIXEL(4); DO_PIXEL(5); DO_PIXEL(6); DO_PIXEL(7);",
+        "        } else {",
+        "          DO_PIXEL_HFLIP(0); DO_PIXEL_HFLIP(1); DO_PIXEL_HFLIP(2); DO_PIXEL_HFLIP(3);",
+        "          DO_PIXEL_HFLIP(4); DO_PIXEL_HFLIP(5); DO_PIXEL_HFLIP(6); DO_PIXEL_HFLIP(7);",
+        "        }",
+        "      }"
+    ])
+    new_middle = eol.join([
+        "      uint32 bits = READ_BITS(ta, tile & 0x3ff);",
+        "      uint32_t dc_pixels = dc_decode_4bpp(bits);",
+        "      if (bits) {",
+        "        z += ((tile & 0x1c00) >> kPaletteShift);",
+        "        if (tile & 0x4000) {",
+        "          DO_PIXEL_FAST(0); DO_PIXEL_FAST(1); DO_PIXEL_FAST(2); DO_PIXEL_FAST(3);",
+        "          DO_PIXEL_FAST(4); DO_PIXEL_FAST(5); DO_PIXEL_FAST(6); DO_PIXEL_FAST(7);",
+        "        } else {",
+        "          DO_PIXEL_FAST_HFLIP(0); DO_PIXEL_FAST_HFLIP(1); DO_PIXEL_FAST_HFLIP(2); DO_PIXEL_FAST_HFLIP(3);",
+        "          DO_PIXEL_FAST_HFLIP(4); DO_PIXEL_FAST_HFLIP(5); DO_PIXEL_FAST_HFLIP(6); DO_PIXEL_FAST_HFLIP(7);",
+        "        }",
+        "      }"
+    ])
+    if bg_fn.count(old_middle) != 1:
+        sys.exit("ppu.c: full 4bpp tile loop anchor not found or ambiguous")
+    bg_fn = bg_fn.replace(old_middle, new_middle, 1)
+    bg_fn = bg_fn.replace("#undef DO_PIXEL_HFLIP",
+        "#undef DO_PIXEL_HFLIP" + eol +
+        "#undef DO_PIXEL_FAST" + eol +
+        "#undef DO_PIXEL_FAST_HFLIP", 1)
+    ppu = ppu[:bg_start] + bg_fn + ppu[bg_end:]
+
+    # Sprite rows use exactly the same four-plane pixel encoding.
+    sprite_start = ppu.find("static bool ppu_evaluateSprites(Ppu* ppu, int line) {")
+    sprite_end = ppu.find("static uint16_t ppu_getVramRemap(Ppu* ppu) {", sprite_start)
+    if sprite_start < 0 or sprite_end < 0:
+        sys.exit("ppu.c: sprite evaluator anchors not found for LUT")
+    sprite_fn = ppu[sprite_start:sprite_end]
+    plane_anchor = "            uint32 plane = addr[0] | addr[8] << 16;"
+    if sprite_fn.count(plane_anchor) != 1:
+        sys.exit("ppu.c: sprite plane anchor not found or ambiguous")
+    sprite_fn = sprite_fn.replace(plane_anchor,
+        plane_anchor + eol + "            uint32_t dc_pixels = dc_decode_4bpp(plane);", 1)
+    pixel_anchor = "              int pixel = (bits >> 0) & 1 | (bits >> 7) & 2 | (bits >> 14) & 4 | (bits >> 21) & 8;"
+    if sprite_fn.count(pixel_anchor) != 1:
+        sys.exit("ppu.c: sprite pixel decode anchor not found or ambiguous")
+    sprite_fn = sprite_fn.replace(pixel_anchor,
+        "              int pixel = (dc_pixels >> (shift * 4)) & 0xf;", 1)
+    ppu = ppu[:sprite_start] + sprite_fn + ppu[sprite_end:]
+    write(ppu_path, ppu)
+    print("patch_smw: enabled SH-4 4bpp planar pixel LUT")
+else:
+    print("patch_smw: 4bpp planar pixel LUT already present")
+
 # --- 8. direct RGB565 output from the PPU compositor ------------------------
 # Step 4 has already made the no-math renderer use a cached palette table.
 # Store that table as RGB565 and make both composite paths write 16-bit output.
