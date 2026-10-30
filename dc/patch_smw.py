@@ -437,3 +437,70 @@ if rgb565_mark not in ppu:
     print("patch_smw: enabled direct RGB565 PPU output")
 else:
     print("patch_smw: direct RGB565 PPU output already present")
+
+
+# --- 9. skip empty 4bpp tile rows before decoding or visiting pixels --------
+# Most transparent tile rows need no palette-plane expansion or per-pixel
+# depth checks. Keep the original non-empty path byte-for-byte equivalent.
+ppu = read(ppu_path)
+ppu_eol = "\r\n" if "\r\n" in ppu else "\n"
+empty_mark = "/* DC-PATCH: skip empty 4bpp rows */"
+if empty_mark not in ppu:
+    bg_old = ppu_eol.join([
+        "      uint32 bits = READ_BITS(ta, tile & 0x3ff);",
+        "      uint32_t dc_pixels = dc_decode_4bpp(bits);",
+        "      if (bits) {",
+        "        z += ((tile & 0x1c00) >> kPaletteShift);"
+    ])
+    bg_new = ppu_eol.join([
+        "      uint32 bits = READ_BITS(ta, tile & 0x3ff);",
+        "      if (bits) {",
+        "        uint32_t dc_pixels = dc_decode_4bpp(bits);",
+        "        z += ((tile & 0x1c00) >> kPaletteShift);"
+    ])
+    if ppu.count(bg_old) != 1:
+        sys.exit("ppu.c: 4bpp empty-row background anchor not found or ambiguous")
+    ppu = ppu.replace(bg_old, bg_new, 1)
+
+    sprite_start = ppu.find("static bool ppu_evaluateSprites(Ppu* ppu, int line) {")
+    sprite_end = ppu.find("static uint16_t ppu_getVramRemap(Ppu* ppu) {", sprite_start)
+    if sprite_start < 0 or sprite_end < 0:
+        sys.exit("ppu.c: sprite evaluator anchors not found for empty-row optimization")
+    sprite_fn = ppu[sprite_start:sprite_end]
+    sprite_old = ppu_eol.join([
+        "            uint32 plane = addr[0] | addr[8] << 16;",
+        "            uint32_t dc_pixels = dc_decode_4bpp(plane);",
+        "            // go over each pixel",
+        "            int px_left = IntMax(-(col + x + kPpuExtraLeftRight), 0);"
+    ])
+    sprite_new = ppu_eol.join([
+        "            uint32 plane = addr[0] | addr[8] << 16;",
+        "            if (plane) {",
+        "              uint32_t dc_pixels = dc_decode_4bpp(plane);",
+        "              // go over each pixel",
+        "              int px_left = IntMax(-(col + x + kPpuExtraLeftRight), 0);"
+    ])
+    if sprite_fn.count(sprite_old) != 1:
+        sys.exit("ppu.c: sprite empty-row start anchor not found or ambiguous")
+    sprite_fn = sprite_fn.replace(sprite_old, sprite_new, 1)
+    sprite_loop_end = ppu_eol.join([
+        "            }",
+        "",
+        "          }"
+    ])
+    sprite_loop_new_end = ppu_eol.join([
+        "            }",
+        "            }",
+        "",
+        "          }"
+    ])
+    if sprite_fn.count(sprite_loop_end) != 1:
+        sys.exit("ppu.c: sprite empty-row end anchor not found or ambiguous")
+    sprite_fn = sprite_fn.replace(sprite_loop_end, sprite_loop_new_end, 1)
+    ppu = ppu[:sprite_start] + sprite_fn + ppu[sprite_end:]
+    ppu = ppu.replace("/* DC-PATCH: direct RGB565 output */",
+        empty_mark + eol + "/* DC-PATCH: direct RGB565 output */", 1)
+    write(ppu_path, ppu)
+    print("patch_smw: skips empty 4bpp background and sprite rows")
+else:
+    print("patch_smw: empty 4bpp row skipping already present")
