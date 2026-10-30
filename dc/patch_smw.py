@@ -483,7 +483,7 @@ if empty_mark not in ppu:
         sys.exit("ppu.c: sprite empty-row start anchor not found or ambiguous")
     sprite_fn = sprite_fn.replace(sprite_old, sprite_new, 1)
     sprite_loop_end = eol.join([
-        "              }",
+        "            }",
         "            }",
         "",
         "          }"
