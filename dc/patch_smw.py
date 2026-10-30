@@ -484,12 +484,10 @@ if empty_mark not in ppu:
     sprite_fn = sprite_fn.replace(sprite_old, sprite_new, 1)
     sprite_loop_end = eol.join([
         "            }",
-        "            }",
         "",
         "          }"
     ])
     sprite_loop_new_end = eol.join([
-        "              }",
         "            }",
         "            }",
         "",
