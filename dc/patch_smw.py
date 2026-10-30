@@ -443,15 +443,16 @@ else:
 # Most transparent tile rows need no palette-plane expansion or per-pixel
 # depth checks. Keep the original non-empty path byte-for-byte equivalent.
 ppu = read(ppu_path)
+ppu_eol = "\r\n" if "\r\n" in ppu else "\n"
 empty_mark = "/* DC-PATCH: skip empty 4bpp rows */"
 if empty_mark not in ppu:
-    bg_old = eol.join([
+    bg_old = ppu_eol.join([
         "      uint32 bits = READ_BITS(ta, tile & 0x3ff);",
         "      uint32_t dc_pixels = dc_decode_4bpp(bits);",
         "      if (bits) {",
         "        z += ((tile & 0x1c00) >> kPaletteShift);"
     ])
-    bg_new = eol.join([
+    bg_new = ppu_eol.join([
         "      uint32 bits = READ_BITS(ta, tile & 0x3ff);",
         "      if (bits) {",
         "        uint32_t dc_pixels = dc_decode_4bpp(bits);",
@@ -466,13 +467,13 @@ if empty_mark not in ppu:
     if sprite_start < 0 or sprite_end < 0:
         sys.exit("ppu.c: sprite evaluator anchors not found for empty-row optimization")
     sprite_fn = ppu[sprite_start:sprite_end]
-    sprite_old = eol.join([
+    sprite_old = ppu_eol.join([
         "            uint32 plane = addr[0] | addr[8] << 16;",
         "            uint32_t dc_pixels = dc_decode_4bpp(plane);",
         "            // go over each pixel",
         "            int px_left = IntMax(-(col + x + kPpuExtraLeftRight), 0);"
     ])
-    sprite_new = eol.join([
+    sprite_new = ppu_eol.join([
         "            uint32 plane = addr[0] | addr[8] << 16;",
         "            if (plane) {",
         "              uint32_t dc_pixels = dc_decode_4bpp(plane);",
@@ -482,12 +483,12 @@ if empty_mark not in ppu:
     if sprite_fn.count(sprite_old) != 1:
         sys.exit("ppu.c: sprite empty-row start anchor not found or ambiguous")
     sprite_fn = sprite_fn.replace(sprite_old, sprite_new, 1)
-    sprite_loop_end = eol.join([
+    sprite_loop_end = ppu_eol.join([
         "            }",
         "",
         "          }"
     ])
-    sprite_loop_new_end = eol.join([
+    sprite_loop_new_end = ppu_eol.join([
         "            }",
         "            }",
         "",
