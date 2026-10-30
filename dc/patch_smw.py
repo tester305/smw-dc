@@ -249,9 +249,9 @@ else:
     print("patch_smw: sprite-register hoisting already present")
 
 
-# --- 8. render directly to RGB565 and remove the extra conversion pass -------
-# The Dreamcast PVR texture is RGB565. Writing that format at the final PPU
-# composite avoids a second full-frame read/convert/write pass in the frontend.
+# --- 8. direct RGB565 output from the PPU compositor ------------------------
+# Step 4 has already made the no-math renderer use a cached palette table.
+# Store that table as RGB565 and make both composite paths write 16-bit output.
 ppu = read(ppu_path)
 rgb565_mark = "/* DC-PATCH: direct RGB565 output */"
 if rgb565_mark not in ppu:
@@ -260,49 +260,50 @@ if rgb565_mark not in ppu:
     if whole_start < 0 or whole_end < 0:
         sys.exit("ppu.c: whole-line renderer anchors not found")
     whole_fn = ppu[whole_start:whole_end]
-
-    blank_old = "size_t n = sizeof(uint32) * (256 + ppu->extraLeftRight * 2);"
-    if whole_fn.count(blank_old) != 1:
+    old = "static uint32_t dc_palette_rgb[2][256];"
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: palette cache declaration not found")
+    whole_fn = whole_fn.replace(old, "static uint16_t dc_palette_rgb[2][256];", 1)
+    old = eol.join([
+        "      dc_palette_rgb[0][c] = 0;  /* clip mask 0 makes all RGB channels zero */",
+        "      dc_palette_rgb[1][c] =",
+        "          (uint32_t)ppu->brightnessMult[color & 0x1f] << 16 |",
+        "          (uint32_t)ppu->brightnessMult[(color >> 5) & 0x1f] << 8 |",
+        "          (uint32_t)ppu->brightnessMult[(color >> 10) & 0x1f];"
+    ])
+    new = eol.join([
+        "      dc_palette_rgb[0][c] = 0;",
+        "      uint32_t r8 = ppu->brightnessMult[color & 0x1f];",
+        "      uint32_t g8 = ppu->brightnessMult[(color >> 5) & 0x1f];",
+        "      uint32_t b8 = ppu->brightnessMult[(color >> 10) & 0x1f];",
+        "      dc_palette_rgb[1][c] = (uint16_t)(((r8 >> 3) << 11) | ((g8 >> 2) << 5) | (b8 >> 3));"
+    ])
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: palette cache value anchor not found")
+    whole_fn = whole_fn.replace(old, new, 1)
+    old = "uint32_t *rgb = dc_palette_rgb[clip_color_mask != 0];"
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: palette cache pointer anchor not found")
+    whole_fn = whole_fn.replace(old, "uint16_t *rgb = dc_palette_rgb[clip_color_mask != 0];", 1)
+    old = "size_t n = sizeof(uint32) * (256 + ppu->extraLeftRight * 2);"
+    if whole_fn.count(old) != 1:
         sys.exit("ppu.c: forced-blank output size anchor not found")
-    whole_fn = whole_fn.replace(blank_old,
-        "size_t n = sizeof(uint16_t) * (256 + ppu->extraLeftRight * 2);", 1)
-
-    dst_old = "uint32 *dst = (uint32*)&ppu->renderBuffer[(y - 1) * ppu->renderPitch], *dst_org = dst;"
-    if whole_fn.count(dst_old) != 1:
-        sys.exit("ppu.c: final render destination anchor not found")
-    whole_fn = whole_fn.replace(dst_old,
-        "uint16_t *dst = (uint16_t*)&ppu->renderBuffer[(y - 1) * ppu->renderPitch], *dst_org = dst;", 1)
-
-    no_math_old = eol.join([
-        "        uint32 color = ppu->cgram[ppu->bgBuffers[0].data[i] & 0xff];",
-        "        dst[0] = ppu->brightnessMult[color & clip_color_mask] << 16 |",
-        "          ppu->brightnessMult[(color >> 5) & clip_color_mask] << 8 |",
-        "          ppu->brightnessMult[(color >> 10) & clip_color_mask];"
-    ])
-    no_math_new = eol.join([
-        "        uint32 color = ppu->cgram[ppu->bgBuffers[0].data[i] & 0xff];",
-        "        uint32_t r8 = ppu->brightnessMult[color & clip_color_mask];",
-        "        uint32_t g8 = ppu->brightnessMult[(color >> 5) & clip_color_mask];",
-        "        uint32_t b8 = ppu->brightnessMult[(color >> 10) & clip_color_mask];",
-        "        dst[0] = (uint16_t)(((r8 >> 3) << 11) | ((g8 >> 2) << 5) | (b8 >> 3));"
-    ])
-    if whole_fn.count(no_math_old) != 1:
-        sys.exit("ppu.c: simple RGB output anchor not found")
-    whole_fn = whole_fn.replace(no_math_old, no_math_new, 1)
-
-    math_old = "        dst[0] = color_map[b] | color_map[g] << 8 | color_map[r] << 16;"
-    math_new = eol.join([
+    whole_fn = whole_fn.replace(old, "size_t n = sizeof(uint16_t) * (256 + ppu->extraLeftRight * 2);", 1)
+    old = "uint32 *dst = (uint32*)&ppu->renderBuffer[(y - 1) * ppu->renderPitch], *dst_org = dst;"
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: render destination anchor not found")
+    whole_fn = whole_fn.replace(old, "uint16_t *dst = (uint16_t*)&ppu->renderBuffer[(y - 1) * ppu->renderPitch], *dst_org = dst;", 1)
+    old = "        dst[0] = color_map[b] | color_map[g] << 8 | color_map[r] << 16;"
+    new = eol.join([
         "        uint32_t r8 = color_map[r];",
         "        uint32_t g8 = color_map[g];",
         "        uint32_t b8 = color_map[b];",
         "        dst[0] = (uint16_t)(((r8 >> 3) << 11) | ((g8 >> 2) << 5) | (b8 >> 3));"
     ])
-    if whole_fn.count(math_old) != 1:
-        sys.exit("ppu.c: color-math RGB output anchor not found")
-    whole_fn = whole_fn.replace(math_old, math_new, 1)
-
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: color-math output anchor not found")
+    whole_fn = whole_fn.replace(old, new, 1)
     ppu = ppu[:whole_start] + whole_fn + ppu[whole_end:]
-    ppu = ppu.replace(rgb565_mark, rgb565_mark, 1) if rgb565_mark in ppu else ppu
     ppu = ppu.replace("static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {",
         rgb565_mark + eol + "static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {", 1)
     write(ppu_path, ppu)
