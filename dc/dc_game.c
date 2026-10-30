@@ -180,7 +180,7 @@ int main(int argc, char **argv) {
       g_rtl_game_info->draw_ppu_frame();
       uint64_t t2 = dc_time_us();
 
-      /* Keep game/CPU time separate from PPU rendering + RGB565 conversion. */
+      /* Keep game/CPU time separate from PPU rendering (direct RGB565). */
       draw_us = (uint32_t)(t2 - t1);
       if (show_perf) {
         DrawNumber(4, 4, (int)(logic_us / 100), 0xFFFF);
