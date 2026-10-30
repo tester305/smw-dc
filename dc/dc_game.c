@@ -106,44 +106,8 @@ static void AudioFill(int16_t *dst, int frames) {
 }
 
 /* ---- video ---- */
-static uint8 g_pixels[256 * 4 * 240] __attribute__((aligned(32)));     /* emulator PPU (unused) */
-static uint8 g_my_pixels[256 * 4 * 240] __attribute__((aligned(32)));  /* game PPU */
-static uint16_t g_fb[256 * 256] __attribute__((aligned(32)));          /* RGB565 texture source */
-
-/* Small hot lookup tables keep the 57,344-pixel conversion loop cheap. */
-static uint16_t g_rgb565_r[256];
-static uint16_t g_rgb565_g[256];
-static uint16_t g_rgb565_b[256];
-static int g_rgb565_tables_ready;
-
-static void ConvertFrame(void) {
-  if (!g_rgb565_tables_ready) {
-    for (unsigned i = 0; i < 256; i++) {
-      g_rgb565_r[i] = (uint16_t)((i >> 3) << 11);
-      g_rgb565_g[i] = (uint16_t)((i >> 2) << 5);
-      g_rgb565_b[i] = (uint16_t)(i >> 3);
-    }
-    g_rgb565_tables_ready = 1;
-  }
-
-  const uint32_t *src = (const uint32_t *)g_my_pixels;
-  uint16_t *dst = g_fb;
-  for (int y = 0; y < 224; y++) {
-    for (int x = 0; x < 256; x += 4) {
-      uint32_t p0 = src[x + 0];
-      uint32_t p1 = src[x + 1];
-      uint32_t p2 = src[x + 2];
-      uint32_t p3 = src[x + 3];
-
-      dst[x + 0] = g_rgb565_r[(p0 >> 16) & 0xff] | g_rgb565_g[(p0 >> 8) & 0xff] | g_rgb565_b[p0 & 0xff];
-      dst[x + 1] = g_rgb565_r[(p1 >> 16) & 0xff] | g_rgb565_g[(p1 >> 8) & 0xff] | g_rgb565_b[p1 & 0xff];
-      dst[x + 2] = g_rgb565_r[(p2 >> 16) & 0xff] | g_rgb565_g[(p2 >> 8) & 0xff] | g_rgb565_b[p2 & 0xff];
-      dst[x + 3] = g_rgb565_r[(p3 >> 16) & 0xff] | g_rgb565_g[(p3 >> 8) & 0xff] | g_rgb565_b[p3 & 0xff];
-    }
-    src += 256;
-    dst += 256;
-  }
-}
+static uint8 g_pixels[256 * 4 * 240] __attribute__((aligned(32))); /* emulator PPU (unused) */
+static uint16_t g_my_pixels[256 * 240] __attribute__((aligned(32))); /* direct RGB565 PVR source */
 
 /* Tiny 3x5 digit font for the timing overlay (A+B+X+Y toggles it). */
 static void DrawNumber(int x, int y, int value, uint16_t color) {
@@ -159,7 +123,7 @@ static void DrawNumber(int x, int y, int value, uint16_t color) {
         if (g & (1 << (14 - row * 3 - col)))
           for (int dy = 0; dy < 2; dy++)
             for (int dx = 0; dx < 2; dx++)
-              g_fb[(y + row * 2 + dy) * 256 + x + col * 2 + dx] = color;
+              g_my_pixels[(y + row * 2 + dy) * 256 + x + col * 2 + dx] = color;
   }
 }
 
@@ -185,7 +149,7 @@ int main(int argc, char **argv) {
   g_spc_player->initialize(g_spc_player);
 
   PpuBeginDrawing(g_snes->ppu, g_pixels, 256 * 4, 0);
-  PpuBeginDrawing(g_my_ppu, g_my_pixels, 256 * 4, 0);
+  PpuBeginDrawing(g_my_ppu, (uint8_t *)g_my_pixels, 256 * sizeof(g_my_pixels[0]), 0);
 
   RtlReadSram();
 
@@ -214,17 +178,16 @@ int main(int argc, char **argv) {
 
     if (!skip_now) {
       g_rtl_game_info->draw_ppu_frame();
-      ConvertFrame();
       uint64_t t2 = dc_time_us();
 
-      /* Keep game/CPU time separate from PPU rendering + RGB565 conversion. */
+      /* Keep game/CPU time separate from PPU rendering (direct RGB565). */
       draw_us = (uint32_t)(t2 - t1);
       if (show_perf) {
         DrawNumber(4, 4, (int)(logic_us / 100), 0xFFFF);
         DrawNumber(4, 18, (int)(draw_us / 100), 0x07FF);
         DrawNumber(4, 32, (int)skipped, 0xFFE0);
       }
-      dc_present(g_fb);
+      dc_present(g_my_pixels);
       uint64_t t3 = dc_time_us();
       /* Include presentation/upload overhead in the frame budget too. */
       skip_now = (t3 - t0) > (kFrameUs - 1200);

@@ -375,3 +375,65 @@ if planar_mark not in ppu:
     print("patch_smw: enabled SH-4 4bpp planar pixel LUT")
 else:
     print("patch_smw: 4bpp planar pixel LUT already present")
+
+# --- 8. direct RGB565 output from the PPU compositor ------------------------
+# Step 4 has already made the no-math renderer use a cached palette table.
+# Store that table as RGB565 and make both composite paths write 16-bit output.
+ppu = read(ppu_path)
+rgb565_mark = "/* DC-PATCH: direct RGB565 output */"
+if rgb565_mark not in ppu:
+    whole_start = ppu.find("static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {")
+    whole_end = ppu.find("static bool ppu_evaluateSprites(Ppu* ppu, int line) {", whole_start)
+    if whole_start < 0 or whole_end < 0:
+        sys.exit("ppu.c: whole-line renderer anchors not found")
+    whole_fn = ppu[whole_start:whole_end]
+    old = "static uint32_t dc_palette_rgb[2][256];"
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: palette cache declaration not found")
+    whole_fn = whole_fn.replace(old, "static uint16_t dc_palette_rgb[2][256];", 1)
+    old = eol.join([
+        "      dc_palette_rgb[0][c] = 0;  /* clip mask 0 makes all RGB channels zero */",
+        "      dc_palette_rgb[1][c] =",
+        "          (uint32_t)ppu->brightnessMult[color & 0x1f] << 16 |",
+        "          (uint32_t)ppu->brightnessMult[(color >> 5) & 0x1f] << 8 |",
+        "          (uint32_t)ppu->brightnessMult[(color >> 10) & 0x1f];"
+    ])
+    new = eol.join([
+        "      dc_palette_rgb[0][c] = 0;",
+        "      uint32_t r8 = ppu->brightnessMult[color & 0x1f];",
+        "      uint32_t g8 = ppu->brightnessMult[(color >> 5) & 0x1f];",
+        "      uint32_t b8 = ppu->brightnessMult[(color >> 10) & 0x1f];",
+        "      dc_palette_rgb[1][c] = (uint16_t)(((r8 >> 3) << 11) | ((g8 >> 2) << 5) | (b8 >> 3));"
+    ])
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: palette cache value anchor not found")
+    whole_fn = whole_fn.replace(old, new, 1)
+    old = "uint32_t *rgb = dc_palette_rgb[clip_color_mask != 0];"
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: palette cache pointer anchor not found")
+    whole_fn = whole_fn.replace(old, "uint16_t *rgb = dc_palette_rgb[clip_color_mask != 0];", 1)
+    old = "size_t n = sizeof(uint32) * (256 + ppu->extraLeftRight * 2);"
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: forced-blank output size anchor not found")
+    whole_fn = whole_fn.replace(old, "size_t n = sizeof(uint16_t) * (256 + ppu->extraLeftRight * 2);", 1)
+    old = "uint32 *dst = (uint32*)&ppu->renderBuffer[(y - 1) * ppu->renderPitch], *dst_org = dst;"
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: render destination anchor not found")
+    whole_fn = whole_fn.replace(old, "uint16_t *dst = (uint16_t*)&ppu->renderBuffer[(y - 1) * ppu->renderPitch], *dst_org = dst;", 1)
+    old = "        dst[0] = color_map[b] | color_map[g] << 8 | color_map[r] << 16;"
+    new = eol.join([
+        "        uint32_t r8 = color_map[r];",
+        "        uint32_t g8 = color_map[g];",
+        "        uint32_t b8 = color_map[b];",
+        "        dst[0] = (uint16_t)(((r8 >> 3) << 11) | ((g8 >> 2) << 5) | (b8 >> 3));"
+    ])
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: color-math output anchor not found")
+    whole_fn = whole_fn.replace(old, new, 1)
+    ppu = ppu[:whole_start] + whole_fn + ppu[whole_end:]
+    ppu = ppu.replace("static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {",
+        rgb565_mark + eol + "static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {", 1)
+    write(ppu_path, ppu)
+    print("patch_smw: enabled direct RGB565 PPU output")
+else:
+    print("patch_smw: direct RGB565 PPU output already present")
