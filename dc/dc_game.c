@@ -292,11 +292,23 @@ static int RunMainMenu(int *quit) {
   return 0;
 }
 
+static void BootMark(const char *message) {
+  /* Draw directly through KOS BIOS font so each checkpoint is visible even
+     if the game renderer or asset loading has not started. */
+  if (!vram_s || !vid_mode) return;
+  vid_clear(0, 0, 0);
+  bfont_set_encoding(BFONT_CODE_ISO8859_1);
+  bfont_set_foreground_color(0xFFFF);
+  bfont_set_background_color(0x0000);
+  bfont_draw_str(vram_s + 12 * vid_mode->width + 12, vid_mode->width, true, message);
+}
+
 int main(int argc, char **argv) {
   (void)argc; (void)argv;
 
   if (dc_init() != 0)
-    dc_fatal("Video / PVR initialisation failed");
+    dc_fatal("BOOT 1: VIDEO INIT FAILED");
+  BootMark("BOOT 1: VIDEO OK");
 
   /* What smw.ini used to provide. */
   g_config.new_renderer = true;
@@ -305,12 +317,16 @@ int main(int argc, char **argv) {
   g_config.audio_channels = 2;
   g_config.audio_samples = 512;
 
+  BootMark("BOOT 2: LOADING ASSETS");
   LoadAssets();
 
+  BootMark("BOOT 3: INITIALIZING SNES");
   if (!SnesInit(NULL, 0))          /* no ROM: pure C reimplementation */
-    Die("SnesInit failed");
+    Die("BOOT 3: SNES INIT FAILED");
 
+  BootMark("BOOT 4: INITIALIZING AUDIO");
   g_spc_player = SmwSpcPlayer_Create();
+  if (!g_spc_player) Die("BOOT 4: SPC PLAYER CREATE FAILED");
   g_spc_player->initialize(g_spc_player);
 
   PpuBeginDrawing(g_snes->ppu, g_pixels, 256 * 4, 0);
@@ -319,9 +335,11 @@ int main(int argc, char **argv) {
   RtlReadSram();
   dc_cheats_init();
 
+  BootMark("BOOT 5: AUDIO OK");
   if (dc_audio_start(AudioFill, kAudioRate) != 0)
-    Die("Audio initialisation failed");
+    Die("BOOT 5: AUDIO INIT FAILED");
 
+  BootMark("BOOT 6: MENU STARTING");
   int quit = 0;
   if (!RunMainMenu(&quit) || quit) { dc_shutdown(); return 0; }
 
