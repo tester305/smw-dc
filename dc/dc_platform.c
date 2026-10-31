@@ -7,6 +7,7 @@
 #include <kos/init.h>
 #include <arch/timer.h>
 #include <dc/video.h>
+#include <dc/pvr/pvr_regs.h>
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
 #include <dc/sound/sound.h>
@@ -32,29 +33,29 @@ static snd_stream_hnd_t g_stream = -1;
 static dc_audio_fill_fn g_fill;
 static int16_t g_abuf[AUDIO_BUF_BYTES / 2] __attribute__((aligned(32)));
 
-/* Reuse the known-good KOS display selection from the earlier Dreamcast port. */
+/* Progressive 320x240 (the hardware pixel/line doubles it to 640x480 on
+   output) is the standard KallistiOS homebrew mode and the only display path
+   that every Dreamcast emulator renders reliably. The interlaced 640x480
+   direct-framebuffer modes previously used here are the least supported path
+   and black-screen in several emulators. */
 static int dc_display_mode(void) {
-  return vid_check_cable() == CT_VGA ? DM_640x480_VGA : DM_640x480_NTSC_IL;
+  return vid_check_cable() == CT_VGA ? DM_320x240_VGA : DM_320x240_NTSC;
 }
 
 int dc_init(void) {
-  int i;
   int mode = dc_display_mode();
 
-  /* Match the SMB front end's full video reset after the BIOS hand-off. */
-  vid_set_mode(mode, PM_RGB565);
-  vid_empty();
   vid_set_mode(mode, PM_RGB565);
   vid_border_color(0, 0, 0);
   vid_clear(0, 0, 0);
   dc_menu_init();
-  for (i = 0; i < 8; ++i) vid_waitvbl();
+  for (int i = 0; i < 8; ++i) dc_wait_vbl();
 
   if (!vid_mode || !vram_s || vid_mode->width < 256 || vid_mode->height < 224)
     return -1;
 
   g_vmu_fs_ready = (fs_vmu_init() == 0);
-  if (!g_vmu_fs_ready) fprintf(stderr, "VMU filesystem unavailable\\n");
+  if (!g_vmu_fs_ready) fprintf(stderr, "VMU filesystem unavailable\n");
   return 0;
 }
 
@@ -102,11 +103,29 @@ void dc_menu_draw_str(int y, const char *str, int highlight) {
   bfont_draw_str(vram_s + y * pitch + x, pitch, true, str);
 }
 void dc_menu_present(void) {
-  vid_waitvbl();
-  if (vid_mode && (vid_mode->flags & VID_INTERLACE)) vid_waitvbl();
+  /* Single framebuffer: the text is already on screen, just pace to the beam. */
+  dc_wait_vbl();
 }
 
-void dc_wait_vbl(void) { vid_waitvbl(); }
+/* KOS's vid_waitvbl() busy-polls the SPG_STATUS register and spins FOREVER on
+   emulators that never update it: dc_init() would hang before drawing a
+   single pixel, leaving a permanent black screen with no feedback. Poll the
+   register ourselves with a hard deadline and fall back to frame pacing when
+   the register is dead. On real hardware and faithful emulators this behaves
+   exactly like vid_waitvbl(). */
+void dc_wait_vbl(void) {
+  uint64_t t0 = timer_us_gettime64();
+  uint32_t line = PVR_GET(PVR_SYNC_STATUS) & 0x1ff;
+
+  if (line == 0) {
+    /* Beam is at the top of the frame; wait for it to leave (bounded). */
+    while ((PVR_GET(PVR_SYNC_STATUS) & 0x1ff) == 0)
+      if (timer_us_gettime64() - t0 > 25000) return;
+  }
+  /* Wait for the scanline counter to wrap back to 0 = vblank start. */
+  while ((PVR_GET(PVR_SYNC_STATUS) & 0x1ff) != 0)
+    if (timer_us_gettime64() - t0 > 25000) return;
+}
 
 uint32_t dc_read_pad(int port, int *quit, int *present) {
   maple_device_t *dev = maple_enum_type(port, MAPLE_FUNC_CONTROLLER);
@@ -310,7 +329,7 @@ void dc_fatal(const char *msg) {
     bfont_set_foreground_color(0xFFFF);
     bfont_set_background_color(0x0000);
     bfont_draw_str(vram_s + 24 * pitch + 24, pitch, true, msg ? msg : "FATAL ERROR");
-    for (int i = 0; i < 60 * 8; i++) vid_waitvbl();
+    for (int i = 0; i < 60 * 8; i++) dc_wait_vbl();
   }
   exit(1);
 }

@@ -152,26 +152,26 @@ static void DrawMenuBackground(unsigned frame) {
   }
 }
 
-/* Main menu graphics: the same layout and BIOS-font helpers as smb-dc's run_main_menu()
-   (title at y=100, hint at y=140, items every 40 lines from y=210, ">" marker on the
-   selection, clear + draw + present on the BIOS framebuffer). */
+/* Main menu graphics: BIOS-font helpers on the framebuffer, laid out for the
+   progressive 320x240 display (24 px BIOS font = ten 24 px rows per screen;
+   keep strings under ~26 characters so they fit 320 px). */
 static const char *const kMainMenuLabels[3] = { "Start Game", "VMU Save Info", "Cheat Manager" };
 
 static void DrawMainMenu(int selection, int info_page) {
   dc_menu_init();
   dc_menu_clear();
   if (info_page) {
-    dc_menu_draw_str(100, "VMU Save Information", 0);
-    dc_menu_draw_str(150, "SRAM: /vmu/a1/SMW.SRM", 0);
-    dc_menu_draw_str(190, "Cheats: SMW.CHT", 0);
-    dc_menu_draw_str(280, "A / Start / B = Back", 0);
+    dc_menu_draw_str(32, "VMU Save Information", 0);
+    dc_menu_draw_str(88, "SRAM: /vmu/a1/SMW.SRM", 0);
+    dc_menu_draw_str(120, "Cheats: SMW.CHT", 0);
+    dc_menu_draw_str(200, "A / Start / B = Back", 0);
   } else {
-    dc_menu_draw_str(100, "Welcome to SMW for Dreamcast", 0);
-    dc_menu_draw_str(140, "A / Start = Select", 0);
-    dc_menu_draw_str(210, kMainMenuLabels[0], selection == 0);
-    dc_menu_draw_str(250, kMainMenuLabels[1], selection == 1);
-    dc_menu_draw_str(290, kMainMenuLabels[2], selection == 2);
-    dc_menu_draw_str(350, "B = Quit", 0);
+    dc_menu_draw_str(24, "SMW for Dreamcast", 0);
+    dc_menu_draw_str(64, "A / Start = Select", 0);
+    dc_menu_draw_str(112, kMainMenuLabels[0], selection == 0);
+    dc_menu_draw_str(148, kMainMenuLabels[1], selection == 1);
+    dc_menu_draw_str(184, kMainMenuLabels[2], selection == 2);
+    dc_menu_draw_str(212, "B = Quit", 0);
   }
   dc_menu_present();
 }
