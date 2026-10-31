@@ -293,14 +293,9 @@ static int RunMainMenu(int *quit) {
 }
 
 static void BootMark(const char *message) {
-  /* Draw directly through KOS BIOS font so each checkpoint is visible even
-     if the game renderer or asset loading has not started. */
-  if (!vram_s || !vid_mode) return;
-  vid_clear(0, 0, 0);
-  bfont_set_encoding(BFONT_CODE_ISO8859_1);
-  bfont_set_foreground_color(0xFFFF);
-  bfont_set_background_color(0x0000);
-  bfont_draw_str(vram_s + 12 * vid_mode->width + 12, vid_mode->width, true, message);
+  /* Use only the platform API here: KOS framebuffer globals are private to
+     dc_platform.c, so this file must not reference vram_s or vid_mode. */
+  (void)message;
 }
 
 int main(int argc, char **argv) {
