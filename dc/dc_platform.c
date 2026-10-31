@@ -35,33 +35,24 @@ static dc_audio_fill_fn g_fill;
 static int16_t g_abuf[AUDIO_BUF_BYTES / 2] __attribute__((aligned(32)));
 
 /* Emulator-safe video selection.
- * Do not query the console flash ROM: emulators may omit or stub the BIOS
- * flash, and region detection can then select an unusable mode. Most emulators
- * default to a 60 Hz NTSC-style display. Keep VGA detection, then use NTSC
- * 480i as the reliable fallback. PAL hardware builds can opt in at compile
- * time with -DDC_FORCE_PAL.
+ * Use KOS's cable-independent, progressive 320x240 NTSC mode. Unlike the
+ * 640x480 NTSC/PAL modes this does not depend on interlaced video support,
+ * which varies between emulator video backends. KOS line-doubles this mode
+ * for a normal 480-line output where supported.
  */
 static int dc_display_mode(void) {
-  int cable = vid_check_cable();
-  if (cable == CT_VGA) return DM_640x480_VGA;
-#ifdef DC_FORCE_PAL
-  return DM_640x480_PAL_IL;
-#else
-  return DM_640x480_NTSC_IL;
-#endif
+  return DM_320x240_NTSC;
 }
 
 int dc_init(void) {
-  /* Set up the framebuffer first; VMU support is optional. */
-  int dm = dc_display_mode();
-  vid_set_mode(dm, PM_RGB565);
-  vid_clear(0, 0, 0);
-
-  if (!vid_mode || !vram_s || vid_mode->width < 512 || vid_mode->height < 448)
+  /* Set up and validate the framebuffer before using any KOS framebuffer API. */
+  vid_set_mode(dc_display_mode(), PM_RGB565);
+  if (!vid_mode || !vram_s || vid_mode->width < 320 || vid_mode->height < 240)
     return -1;
 
   g_fb_width = vid_mode->width;
   g_fb_height = vid_mode->height;
+  vid_clear(0, 0, 0);
 
   /* VMU setup must not prevent video from being brought up. */
   g_vmu_fs_ready = (fs_vmu_init() == 0);
@@ -70,25 +61,22 @@ int dc_init(void) {
 }
 
 /*
- * CPU framebuffer path: deliberately avoid PVR setup and texture uploads.
- * The 256x224 game image is doubled to 512x448 and centered in 640x480.
- * This gives us a simple, known RGB565 scanout path for boot/menu debugging.
+ * CPU RGB565 framebuffer path: no PVR scene or texture upload is required.
+ * Scale the 256x224 source to the active progressive display mode. This also
+ * keeps the menu visible because it uses the same 256-pixel-wide source buffer.
  */
 void dc_present(const uint16_t *img) {
-  uint16_t *fb = (uint16_t *)vram_s;
-  const int xoff = (g_fb_width - 512) / 2;
-  const int yoff = (g_fb_height - 448) / 2;
+  if (!img || !vram_s || g_fb_width <= 0 || g_fb_height <= 0)
+    return;
 
-  for (int y = 0; y < 224; ++y) {
-    const uint16_t *src = img + y * 256;
-    uint16_t *row0 = fb + (yoff + y * 2) * g_fb_width + xoff;
-    uint16_t *row1 = row0 + g_fb_width;
-    for (int x = 0; x < 256; ++x) {
-      uint16_t p = src[x];
-      row0[x * 2] = p;
-      row0[x * 2 + 1] = p;
-      row1[x * 2] = p;
-      row1[x * 2 + 1] = p;
+  uint16_t *fb = (uint16_t *)vram_s;
+  for (int y = 0; y < g_fb_height; ++y) {
+    int sy = (y * 224) / g_fb_height;
+    const uint16_t *src = img + sy * 256;
+    uint16_t *dst = fb + y * g_fb_width;
+    for (int x = 0; x < g_fb_width; ++x) {
+      int sx = (x * 256) / g_fb_width;
+      dst[x] = src[sx];
     }
   }
 }
@@ -290,12 +278,14 @@ void dc_shutdown(void) {
 void dc_fatal(const char *msg) {
   dc_shutdown();
   vid_set_mode(dc_display_mode(), PM_RGB565);
-  vid_clear(0, 0, 0);
-  int pitch = (vid_mode && vid_mode->width) ? (int)vid_mode->width : 640;
-  bfont_set_encoding(BFONT_CODE_ISO8859_1);
-  bfont_set_foreground_color(0xFFFF);
-  bfont_set_background_color(0x0000);
-  bfont_draw_str(vram_s + 24 * pitch + 24, pitch, true, msg);
-  for (int i = 0; i < 60 * 8; i++) vid_waitvbl();
+  if (vid_mode && vram_s) {
+    vid_clear(0, 0, 0);
+    int pitch = (int)vid_mode->width;
+    bfont_set_encoding(BFONT_CODE_ISO8859_1);
+    bfont_set_foreground_color(0xFFFF);
+    bfont_set_background_color(0x0000);
+    bfont_draw_str(vram_s + 24 * pitch + 24, pitch, true, msg ? msg : "FATAL ERROR");
+    for (int i = 0; i < 60 * 8; i++) vid_waitvbl();
+  }
   exit(1);
 }
