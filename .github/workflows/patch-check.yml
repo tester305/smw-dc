@@ -19,6 +19,11 @@ jobs:
       - name: Check patch script syntax
         run: python3 -m py_compile dc/patch_smw.py
 
+      - name: Verify SNES Game Genie decoder
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Idc dc/tests/test_game_genie.c dc/dc_cheats.c -o /tmp/test_game_genie
+          /tmp/test_game_genie
+
       - name: Exhaustively verify 2bpp LUT decoder in C
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror dc/tests/test_2bpp_lut.c -o /tmp/test_2bpp_lut

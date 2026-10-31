@@ -246,6 +246,50 @@ int dc_sram_store(const uint8_t *src, size_t len) {
   return 0;
 }
 
+
+/* Cheats are deliberately stored separately from SMW.SRM. */
+#define DC_VMU_CHEATS_PATH "/vmu/a1/SMW.CHT"
+
+int dc_cheats_load(uint8_t *dst, size_t len) {
+  if (!g_vmu_fs_ready) return -1;
+  FILE *f = fopen(DC_VMU_CHEATS_PATH, "rb");
+  if (!f) return -1;
+  if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
+  long file_len = ftell(f);
+  if (file_len <= 0 || file_len > 65536 || fseek(f, 0, SEEK_SET) != 0) { fclose(f); return -1; }
+  uint8_t *raw = (uint8_t *)malloc((size_t)file_len);
+  if (!raw) { fclose(f); return -1; }
+  size_t got = fread(raw, 1, (size_t)file_len, f);
+  fclose(f);
+  vmu_pkg_t pkg;
+  int ok = got == (size_t)file_len &&
+           vmu_pkg_parse(raw, (size_t)file_len, &pkg) == 0 &&
+           pkg.data_len == (int)len;
+  if (ok) memcpy(dst, pkg.data, len);
+  free(raw);
+  return ok ? 0 : -1;
+}
+
+int dc_cheats_store(const uint8_t *src, size_t len) {
+  if (!g_vmu_fs_ready || len > 32768) return -1;
+  vmu_pkg_t pkg;
+  memset(&pkg, 0, sizeof(pkg));
+  snprintf(pkg.desc_short, sizeof(pkg.desc_short), "SMW CHEATS");
+  snprintf(pkg.desc_long, sizeof(pkg.desc_long), "Super Mario World Cheats");
+  snprintf(pkg.app_id, sizeof(pkg.app_id), "SMW-CHT");
+  pkg.data_len = (int)len;
+  pkg.data = src;
+  uint8_t *raw = NULL;
+  int raw_len = 0;
+  if (vmu_pkg_build(&pkg, &raw, &raw_len) != 0 || !raw || raw_len <= 0) return -1;
+  FILE *f = fopen(DC_VMU_CHEATS_PATH, "wb");
+  if (!f) { free(raw); return -1; }
+  size_t wrote = fwrite(raw, 1, (size_t)raw_len, f);
+  int close_result = fclose(f);
+  free(raw);
+  return (wrote == (size_t)raw_len && close_result == 0) ? 0 : -1;
+}
+
 void dc_shutdown(void) {
   dc_audio_stop();
   if (g_vmu_fs_ready) { fs_vmu_shutdown(); g_vmu_fs_ready = 0; }

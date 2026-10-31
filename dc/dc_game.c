@@ -25,6 +25,8 @@
 #include "snes/snes.h"
 
 #include "dc_platform.h"
+#include <dc/biosfont.h>
+#include "dc_cheats.h"
 
 /* ---- globals the SDL main.c used to define for the rest of the game ---- */
 bool g_debug_flag;
@@ -89,8 +91,23 @@ static void LoadAssets(void) {
 enum { kAudioRate = 32000, kAudioBlock = 534 };
 static int16 g_audio_block[kAudioBlock * 2];
 static int g_audio_pos = kAudioBlock;
+static volatile int g_menu_music;
+static uint32_t g_menu_sample;
+static uint32_t g_menu_phase;
 
 static void AudioFill(int16_t *dst, int frames) {
+  if (g_menu_music) {
+    static const uint16_t notes[] = { 523, 659, 784, 659, 587, 698, 880, 698 };
+    for (int i = 0; i < frames; ++i) {
+      uint32_t note = (g_menu_sample / 4000u) & 7u;
+      g_menu_phase += ((uint32_t)notes[note] << 16) / kAudioRate;
+      int16_t sample = (g_menu_phase & 0x8000u) ? 1800 : -1800;
+      dst[i * 2] = sample;
+      dst[i * 2 + 1] = sample;
+      ++g_menu_sample;
+    }
+    return;
+  }
   while (frames > 0) {
     if (g_audio_pos >= kAudioBlock) {
       RtlRenderAudio(g_audio_block, kAudioBlock, 2);
@@ -127,6 +144,154 @@ static void DrawNumber(int x, int y, int value, uint16_t color) {
   }
 }
 
+/* ---- lightweight Dreamcast front-end menu ---- */
+static void MenuText(int x, int y, uint16_t color, const char *text) {
+  bfont_draw_str_ex(&g_my_pixels[y * 256 + x], 256, color, 0x0000, 16, true, text);
+}
+
+static void DrawMenuBackground(unsigned frame) {
+  for (int y = 0; y < 240; ++y) {
+    for (int x = 0; x < 256; ++x) {
+      unsigned v = (unsigned)(x * 13 + y * 7 + frame * 3);
+      uint16_t color = ((v % 47u) == 0u && ((x + frame) % 5u) == 0u)
+                         ? 0x0208 : 0x0000;
+      g_my_pixels[y * 256 + x] = color;
+    }
+  }
+  /* Subtle moving green code columns. */
+  for (int col = 0; col < 16; ++col) {
+    int x = (col * 17 + (int)(frame * (col % 3 + 1))) & 255;
+    for (int y = 0; y < 240; y += 9) {
+      int yy = (y + (int)(frame * 2 + col * 11)) % 240;
+      g_my_pixels[yy * 256 + x] = 0x03E0;
+    }
+  }
+}
+
+static void DrawMainMenu(int selection, unsigned frame, int info_page) {
+  DrawMenuBackground(frame);
+  MenuText(26, 34, 0x07E0, "SUPER MARIO WORLD");
+  MenuText(26, 58, 0xFFFF, "DREAMCAST EDITION");
+  if (info_page) {
+    MenuText(8, 104, 0x07E0, "VMU SAVE INFORMATION");
+    MenuText(2, 132, 0xFFFF, "SRAM: /vmu/a1/SMW.SRM");
+    MenuText(20, 154, 0xFFFF, "CHEATS: SMW.CHT");
+    MenuText(48, 190, 0xFFE0, "B: BACK");
+  } else {
+    static const char *items[] = {
+      "START GAME", "VMU SAVE INFO", "CHEAT MANAGER"
+    };
+    for (int i = 0; i < 3; ++i) {
+      uint16_t color = (i == selection) ? 0xFFE0 : 0xFFFF;
+      if (i == selection) MenuText(45, 105 + i * 25, 0x07E0, ">");
+      MenuText(62, 105 + i * 25, color, items[i]);
+    }
+    MenuText(8, 174, 0x07E0, "DPAD MOVE  A SELECT");
+    MenuText(90, 198, 0xFFFF, "B BACK");
+  }
+}
+
+static void RunCheatManager(int *quit) {
+  static const char hex[] = "0123456789ABCDEF";
+  char code[9] = "00000000";
+  int editing = 0, selected = 0, char_pos = 0;
+  uint32_t previous = 0;
+  unsigned frame = 0;
+  while (!*quit) {
+    int present = 0;
+    uint32_t pad = dc_read_pad(0, quit, &present);
+    uint32_t pressed = pad & ~previous;
+    previous = pad;
+    if (editing) {
+      if (pressed & DC_PAD_LEFT) code[char_pos] = hex[(strchr(hex, code[char_pos]) - hex + 15) & 15];
+      if (pressed & DC_PAD_RIGHT) code[char_pos] = hex[(strchr(hex, code[char_pos]) - hex + 1) & 15];
+      if (pressed & DC_PAD_A) {
+        if (char_pos < 7) ++char_pos;
+        else {
+          int result = dc_cheats_add(code);
+          if (result == 0) editing = 0;
+        }
+      }
+      if (pressed & DC_PAD_B) editing = 0;
+      if (pressed & DC_PAD_START) {
+        if (dc_cheats_add(code) == 0) editing = 0;
+      }
+      DrawMenuBackground(frame);
+      MenuText(14, 34, 0x07E0, "ADD GAME GENIE CODE");
+      char shown[12];
+      snprintf(shown, sizeof(shown), "%.4s-%.4s", code, code + 4);
+      MenuText(50, 94, 0xFFFF, shown);
+      MenuText(50 + char_pos * 12 + (char_pos >= 4 ? 12 : 0), 122, 0x07E0, "^");
+      MenuText(2, 158, 0xFFFF, "LEFT/RIGHT: HEX");
+      MenuText(20, 182, 0xFFE0, "A NEXT  START SAVE");
+      MenuText(88, 198, 0xFFFF, "B CANCEL");
+    } else {
+      int count = dc_cheats_count();
+      if (pressed & DC_PAD_UP && count) selected = (selected + count - 1) % count;
+      if (pressed & DC_PAD_DOWN && count) selected = (selected + 1) % count;
+      if (pressed & DC_PAD_B) return;
+      if (pressed & DC_PAD_Y && count < DC_CHEAT_MAX) {
+        memset(code, '0', 8); code[8] = 0;
+        char_pos = 0; editing = 1;
+      }
+      if (pressed & DC_PAD_A && count) dc_cheats_toggle(selected);
+      if (pressed & DC_PAD_X && count) {
+        dc_cheats_remove(selected);
+        if (selected >= dc_cheats_count() && selected > 0) --selected;
+      }
+      DrawMenuBackground(frame);
+      MenuText(48, 28, 0x07E0, "CHEAT MANAGER");
+      if (!count) MenuText(30, 78, 0xFFFF, "NO SAVED CHEATS");
+      for (int i = 0; i < count && i < 5; ++i) {
+        const dc_cheat_t *ch = dc_cheats_get(i);
+        char line[24];
+        snprintf(line, sizeof(line), "%c %.4s-%.4s", ch->enabled ? '*' : '-', ch->code, ch->code + 4);
+        MenuText(24, 62 + i * 24, i == selected ? 0xFFE0 : 0xFFFF, line);
+      }
+      MenuText(8, 174, 0x07E0, "Y ADD A TOGGLE X DEL");
+      MenuText(90, 198, 0xFFFF, "B BACK");
+    }
+    dc_present(g_my_pixels);
+    dc_audio_poll();
+    dc_wait_vbl();
+    ++frame;
+  }
+}
+
+static int RunMainMenu(int *quit) {
+  int selection = 0, info_page = 0;
+  uint32_t previous = 0;
+  unsigned frame = 0;
+  bfont_set_encoding(BFONT_CODE_ISO8859_1);
+  g_menu_music = 1;
+  while (!*quit) {
+    int present = 0;
+    uint32_t pad = dc_read_pad(0, quit, &present);
+    uint32_t pressed = pad & ~previous;
+    previous = pad;
+    if (pressed & DC_PAD_UP) selection = (selection + 2) % 3;
+    if (pressed & DC_PAD_DOWN) selection = (selection + 1) % 3;
+    if (pressed & DC_PAD_B) {
+      if (info_page) info_page = 0;
+      else { g_menu_music = 0; g_audio_pos = kAudioBlock; return 0; }
+    }
+    if (pressed & DC_PAD_A) {
+      if (info_page) info_page = 0;
+      else if (selection == 0) { g_menu_music = 0; g_audio_pos = kAudioBlock; return 1; }
+      else if (selection == 1) info_page = 1;
+      else { RunCheatManager(quit); }
+    }
+    DrawMainMenu(selection, frame, info_page);
+    dc_present(g_my_pixels);
+    dc_audio_poll();
+    dc_wait_vbl();
+    ++frame;
+  }
+  g_menu_music = 0;
+  g_audio_pos = kAudioBlock;
+  return 0;
+}
+
 int main(int argc, char **argv) {
   (void)argc; (void)argv;
 
@@ -152,12 +317,16 @@ int main(int argc, char **argv) {
   PpuBeginDrawing(g_my_ppu, (uint8_t *)g_my_pixels, 256 * sizeof(g_my_pixels[0]), 0);
 
   RtlReadSram();
+  dc_cheats_init();
 
   if (dc_audio_start(AudioFill, kAudioRate) != 0)
     Die("Audio initialisation failed");
 
+  int quit = 0;
+  if (!RunMainMenu(&quit) || quit) { dc_shutdown(); return 0; }
+
   const uint64_t kFrameUs = 16667;
-  int quit = 0, show_perf = 0, skip_now = 0;
+  int show_perf = 0, skip_now = 0;
   uint32_t logic_us = 0, draw_us = 0, skipped = 0;
 
   while (!quit) {

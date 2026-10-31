@@ -9,7 +9,7 @@ SMW_SRC = \
 	src/snes/apu src/snes/cart src/snes/cpu src/snes/dma src/snes/dsp src/snes/ppu \
 	src/snes/ppu_old src/snes/snes src/snes/snes_other src/snes/spc
 
-OBJS = $(addsuffix .o,$(addprefix $(SMW)/,$(SMW_SRC))) dc/dc_game.o dc/dc_platform.o romdisk.o
+OBJS = $(addsuffix .o,$(addprefix $(SMW)/,$(SMW_SRC))) dc/dc_game.o dc/dc_platform.o dc/dc_cheats.o romdisk.o
 
 KOS_ROMDISK_DIR = romdisk
 # Upstream is written for x86 compilers: keep old-style C warnings from becoming errors on modern GCC.
