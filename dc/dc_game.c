@@ -124,7 +124,7 @@ static void AudioFill(int16_t *dst, int frames) {
 
 /* ---- video ---- */
 static uint8 g_pixels[256 * 4 * 240] __attribute__((aligned(32))); /* emulator PPU (unused) */
-static uint16_t g_my_pixels[256 * 240] __attribute__((aligned(32))); /* direct RGB565 PVR source */
+static uint16_t g_my_pixels[256 * 256] __attribute__((aligned(32))); /* full 256x256 PVR texture; visible game area is 256x224 */
 
 /* Tiny 3x5 digit font for the timing overlay (A+B+X+Y toggles it). */
 static void DrawNumber(int x, int y, int value, uint16_t color) {
