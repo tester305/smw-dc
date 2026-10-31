@@ -152,23 +152,26 @@ static void DrawMenuBackground(unsigned frame) {
   }
 }
 
-static void DrawMainMenu(int selection, unsigned frame, int info_page) {
-  (void)frame;
+/* Main menu graphics: the same layout and BIOS-font helpers as smb-dc's run_main_menu()
+   (title at y=100, hint at y=140, items every 40 lines from y=210, ">" marker on the
+   selection, clear + draw + present on the BIOS framebuffer). */
+static const char *const kMainMenuLabels[3] = { "Start Game", "VMU Save Info", "Cheat Manager" };
+
+static void DrawMainMenu(int selection, int info_page) {
   dc_menu_init();
   dc_menu_clear();
   if (info_page) {
-    dc_menu_draw_str(100, "VMU SAVE INFORMATION", 0);
+    dc_menu_draw_str(100, "VMU Save Information", 0);
     dc_menu_draw_str(150, "SRAM: /vmu/a1/SMW.SRM", 0);
-    dc_menu_draw_str(190, "CHEATS: SMW.CHT", 0);
-    dc_menu_draw_str(280, "B: BACK", 0);
+    dc_menu_draw_str(190, "Cheats: SMW.CHT", 0);
+    dc_menu_draw_str(280, "A / Start / B = Back", 0);
   } else {
-    dc_menu_draw_str(90, "SUPER MARIO WORLD", 0);
-    dc_menu_draw_str(130, "DREAMCAST EDITION", 0);
-    dc_menu_draw_str(220, "START GAME", selection == 0);
-    dc_menu_draw_str(260, "VMU SAVE INFO", selection == 1);
-    dc_menu_draw_str(300, "CHEAT MANAGER", selection == 2);
-    dc_menu_draw_str(370, "DPAD MOVE   A SELECT", 0);
-    dc_menu_draw_str(410, "B BACK", 0);
+    dc_menu_draw_str(100, "Welcome to SMW for Dreamcast", 0);
+    dc_menu_draw_str(140, "A / Start = Select", 0);
+    dc_menu_draw_str(210, kMainMenuLabels[0], selection == 0);
+    dc_menu_draw_str(250, kMainMenuLabels[1], selection == 1);
+    dc_menu_draw_str(290, kMainMenuLabels[2], selection == 2);
+    dc_menu_draw_str(350, "B = Quit", 0);
   }
   dc_menu_present();
 }
@@ -240,15 +243,14 @@ static void RunCheatManager(int *quit) {
 }
 
 static int RunMainMenu(int *quit) {
-  /* SMB-DC style edge-triggered menu: draw first, then poll controls and
-     debounce directional input so a held button doesn't race through items. */
+  /* SMB-DC style edge-triggered menu: poll controls, debounce directional input so a held
+     button doesn't race through items, and only redraw when something changed. */
   int selection = 0, info_page = 0;
   uint32_t previous = 0;
   int debounce = 0;
-  unsigned frame = 0;
+  int dirty = 1;
 
   dc_menu_init();
-  DrawMainMenu(selection, frame, info_page);
 
   while (!*quit) {
     int present = 0;
@@ -262,14 +264,18 @@ static int RunMainMenu(int *quit) {
       if (pressed & DC_PAD_UP) {
         selection = (selection + 2) % 3;
         debounce = 12;
+        dirty = 1;
       } else if (pressed & DC_PAD_DOWN) {
         selection = (selection + 1) % 3;
         debounce = 12;
+        dirty = 1;
       }
 
       if (pressed & DC_PAD_B) {
-        if (info_page) info_page = 0;
-        else {
+        if (info_page) {
+          info_page = 0;
+          dirty = 1;
+        } else {
           return 0;
         }
       }
@@ -285,12 +291,16 @@ static int RunMainMenu(int *quit) {
           previous = 0;
         }
         debounce = 12;
+        dirty = 1;
       }
     }
 
-    DrawMainMenu(selection, frame, info_page);
-    dc_wait_vbl();
-    ++frame;
+    if (dirty) {
+      DrawMainMenu(selection, info_page);  /* clears, draws and waits for vblank */
+      dirty = 0;
+    } else {
+      dc_wait_vbl();
+    }
   }
 
   return 0;
