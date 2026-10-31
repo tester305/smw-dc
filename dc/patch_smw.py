@@ -10,7 +10,7 @@ those casts at such types (uint16u / uint32u).
 
 Usage: patch_smw.py <path-to-smw-checkout>      (idempotent)
 """
-import re, sys, pathlib, subprocess
+import re, sys, pathlib
 
 
 def read(path):
@@ -506,7 +506,7 @@ else:
     print("patch_smw: empty 4bpp row skipping already present")
 
 
-# --- 10. memoize the per-pixel colour-math path ------------------------------
+# --- 10. memoize the per-pixel colour-math path ----------------------------
 # SMW leaves colour math enabled on nearly every scanline (typically "add subscreen"
 # with only the backdrop layer enabled, BG2 on the subscreen), so the generic
 # per-pixel math loop - ~50 SH-4 instructions per pixel - runs for most of the frame.
@@ -622,7 +622,7 @@ else:
     print("patch_smw: colour-math memo already present")
 
 
-# --- 11. direct CGRAM writers must invalidate the palette cache ---------------
+# --- 11. direct CGRAM writers must invalidate the palette cache ------------
 # Section 5 only hooks CGRAM writes made through ppu_write().  The game's C code uploads
 # palettes straight into g_ppu->cgram (RtlUpdatePalette) and snapshot loading memcpy()s it,
 # so those writes must mark the cache dirty too or an animated palette could go stale.
@@ -660,7 +660,7 @@ if "dc_palette_cache_dirty" not in cpu:
 
 
 # --- 12. sprite scan: reject sprites that are not on this line before any other work ----
-# ppu_evaluateSprites() walks all 128 OAM entries on every one of the 224 scanlines.  Most
+# ppu_evaluateSprites() walks all 128 OAM entries on every one of the 224 scanlines. Most
 # entries are parked off-screen, so check the Y range against the tallest possible sprite
 # first and skip the size/high-OAM lookups for them.  Identical result: a sprite whose row is
 # >= the largest size can never satisfy row < spriteHeight for either size.  The OAM base
@@ -696,8 +696,6 @@ if spr_mark not in ppu:
     print("patch_smw: sprite scan early-out")
 else:
     print("patch_smw: sprite early-out already present")
-
-
 
 
 # --- 13. LUT-decode aligned 2bpp background tiles --------------------------
@@ -747,23 +745,55 @@ if two_bpp_mark not in ppu:
         "         dc_planar_2bpp_lut[1][(planes >> 8) & 0xff];\n"
         "}"), 1)
 
-    # The checked-in unified diff is the source of truth for the actual C function edit.
-    # Write the LUT declaration/initializer/helper first, then apply the C diff to upstream ppu.c.
-    write(ppu_path, ppu)
-    diff_path = pathlib.Path(__file__).resolve().with_name("ppu_2bpp_lut.diff")
-    if not diff_path.is_file():
-        sys.exit(f"missing 2bpp C patch: {diff_path}")
-    try:
-        subprocess.run(
-            ["git", "apply", "--whitespace=nowarn", str(diff_path)],
-            cwd=str(root), check=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as exc:
-        sys.exit(f"ppu.c: failed to apply the checked-in 2bpp C patch: {exc}")
-    ppu = read(ppu_path)
+    bg_start = ppu.find("static void PpuDrawBackground_2bpp(Ppu *ppu, uint y, bool sub, uint layer, PpuZbufType zhi, PpuZbufType zlo) {")
+    bg_end = ppu.find("// Draw a whole line of a 4bpp background layer into bgBuffers, with mosaic applied", bg_start)
+    if bg_start < 0 or bg_end < 0:
+        sys.exit("ppu.c: 2bpp background function anchors not found")
+    bg_fn = ppu[bg_start:bg_end]
+
+    macro_anchor = "#define READ_BITS(ta, tile)"
+    fast_macros = T(
+        "#define DO_PIXEL_FAST(i) do { pixel = (dc_pixels >> ((i) * 2)) & 3; if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)\n"
+        "#define DO_PIXEL_FAST_HFLIP(i) do { pixel = (dc_pixels >> ((7 - (i)) * 2)) & 3; if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)\n" + macro_anchor)
+    if bg_fn.count(macro_anchor) != 1:
+        sys.exit("ppu.c: 2bpp READ_BITS macro anchor not found")
+    bg_fn = bg_fn.replace(macro_anchor, fast_macros, 1)
+
+    old_middle = T(
+        "      uint32 bits = READ_BITS(ta, tile & 0x3ff);\n"
+        "      if (bits) {\n"
+        "        z += ((tile & 0x1c00) >> kPaletteShift);\n"
+        "        if (tile & 0x4000) {\n"
+        "          DO_PIXEL(0); DO_PIXEL(1); DO_PIXEL(2); DO_PIXEL(3);\n"
+        "          DO_PIXEL(4); DO_PIXEL(5); DO_PIXEL(6); DO_PIXEL(7);\n"
+        "        } else {\n"
+        "          DO_PIXEL_HFLIP(0); DO_PIXEL_HFLIP(1); DO_PIXEL_HFLIP(2); DO_PIXEL_HFLIP(3);\n"
+        "          DO_PIXEL_HFLIP(4); DO_PIXEL_HFLIP(5); DO_PIXEL_HFLIP(6); DO_PIXEL_HFLIP(7);\n"
+        "        }\n"
+        "      }")
+    new_middle = T(
+        "      uint32 bits = READ_BITS(ta, tile & 0x3ff);\n"
+        "      if (bits) {\n"
+        "        uint32_t dc_pixels = dc_decode_2bpp(bits);\n"
+        "        z += ((tile & 0x1c00) >> kPaletteShift);\n"
+        "        if (tile & 0x4000) {\n"
+        "          DO_PIXEL_FAST(0); DO_PIXEL_FAST(1); DO_PIXEL_FAST(2); DO_PIXEL_FAST(3);\n"
+        "          DO_PIXEL_FAST(4); DO_PIXEL_FAST(5); DO_PIXEL_FAST(6); DO_PIXEL_FAST(7);\n"
+        "        } else {\n"
+        "          DO_PIXEL_FAST_HFLIP(0); DO_PIXEL_FAST_HFLIP(1); DO_PIXEL_FAST_HFLIP(2); DO_PIXEL_FAST_HFLIP(3);\n"
+        "          DO_PIXEL_FAST_HFLIP(4); DO_PIXEL_FAST_HFLIP(5); DO_PIXEL_FAST_HFLIP(6); DO_PIXEL_FAST_HFLIP(7);\n"
+        "        }\n"
+        "      }")
+    if bg_fn.count(old_middle) != 1:
+        sys.exit("ppu.c: 2bpp full-tile loop anchor not found or ambiguous")
+    bg_fn = bg_fn.replace(old_middle, new_middle, 1)
+    bg_fn = bg_fn.replace("#undef DO_PIXEL_HFLIP", "#undef DO_PIXEL_HFLIP" + T(
+        "\n#undef DO_PIXEL_FAST\n#undef DO_PIXEL_FAST_HFLIP"), 1)
+    ppu = ppu[:bg_start] + bg_fn + ppu[bg_end:]
     ppu = ppu.replace("/* DC-PATCH: memoized colour math */",
         two_bpp_mark + two_bpp_eol + "/* DC-PATCH: memoized colour math */", 1)
     write(ppu_path, ppu)
-    print("patch_smw: applied checked-in SH-4 2bpp C fast path")
+    print("patch_smw: enabled SH-4 2bpp LUT fast path")
 else:
     print("patch_smw: 2bpp planar pixel LUT already present")
+
