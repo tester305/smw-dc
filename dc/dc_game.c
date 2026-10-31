@@ -202,14 +202,14 @@ static void RunCheatManager(int *quit) {
         if (dc_cheats_add(code) == 0) editing = 0;
       }
       DrawMenuBackground(frame);
-      MenuText(38, 34, 0x07E0, "ADD GAME GENIE CODE");
+      MenuText(14, 34, 0x07E0, "ADD GAME GENIE CODE");
       char shown[12];
       snprintf(shown, sizeof(shown), "%.4s-%.4s", code, code + 4);
       MenuText(50, 94, 0xFFFF, shown);
       MenuText(50 + char_pos * 12 + (char_pos >= 4 ? 12 : 0), 122, 0x07E0, "^");
       MenuText(2, 158, 0xFFFF, "LEFT/RIGHT: HEX");
       MenuText(20, 182, 0xFFE0, "A NEXT  START SAVE");
-      MenuText(88, 206, 0xFFFF, "B CANCEL");
+      MenuText(88, 198, 0xFFFF, "B CANCEL");
     } else {
       int count = dc_cheats_count();
       if (pressed & DC_PAD_UP && count) selected = (selected + count - 1) % count;
@@ -233,7 +233,7 @@ static void RunCheatManager(int *quit) {
         snprintf(line, sizeof(line), "%c %.4s-%.4s", ch->enabled ? '*' : '-', ch->code, ch->code + 4);
         MenuText(24, 62 + i * 24, i == selected ? 0xFFE0 : 0xFFFF, line);
       }
-      MenuText(18, 174, 0x07E0, "Y ADD A TOGGLE X DEL");
+      MenuText(8, 174, 0x07E0, "Y ADD A TOGGLE X DEL");
       MenuText(90, 198, 0xFFFF, "B BACK");
     }
     dc_present(g_my_pixels);
