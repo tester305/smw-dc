@@ -293,9 +293,7 @@ static int RunMainMenu(int *quit) {
 }
 
 static void BootMark(const char *message) {
-  /* Use only the platform API here: KOS framebuffer globals are private to
-     dc_platform.c, so this file must not reference vram_s or vid_mode. */
-  (void)message;
+  dc_boot_mark(message);
 }
 
 int main(int argc, char **argv) {
