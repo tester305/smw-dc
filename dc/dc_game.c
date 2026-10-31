@@ -168,26 +168,24 @@ static void DrawMenuBackground(unsigned frame) {
 }
 
 static void DrawMainMenu(int selection, unsigned frame, int info_page) {
-  DrawMenuBackground(frame);
-  MenuText(26, 34, 0x07E0, "SUPER MARIO WORLD");
-  MenuText(26, 58, 0xFFFF, "DREAMCAST EDITION");
+  (void)frame;
+  dc_menu_init();
+  dc_menu_clear();
   if (info_page) {
-    MenuText(8, 104, 0x07E0, "VMU SAVE INFORMATION");
-    MenuText(2, 132, 0xFFFF, "SRAM: /vmu/a1/SMW.SRM");
-    MenuText(20, 154, 0xFFFF, "CHEATS: SMW.CHT");
-    MenuText(48, 190, 0xFFE0, "B: BACK");
+    dc_menu_draw_str(100, "VMU SAVE INFORMATION", 0);
+    dc_menu_draw_str(150, "SRAM: /vmu/a1/SMW.SRM", 0);
+    dc_menu_draw_str(190, "CHEATS: SMW.CHT", 0);
+    dc_menu_draw_str(280, "B: BACK", 0);
   } else {
-    static const char *items[] = {
-      "START GAME", "VMU SAVE INFO", "CHEAT MANAGER"
-    };
-    for (int i = 0; i < 3; ++i) {
-      uint16_t color = (i == selection) ? 0xFFE0 : 0xFFFF;
-      if (i == selection) MenuText(45, 105 + i * 25, 0x07E0, ">");
-      MenuText(62, 105 + i * 25, color, items[i]);
-    }
-    MenuText(8, 174, 0x07E0, "DPAD MOVE  A SELECT");
-    MenuText(90, 198, 0xFFFF, "B BACK");
+    dc_menu_draw_str(90, "SUPER MARIO WORLD", 0);
+    dc_menu_draw_str(130, "DREAMCAST EDITION", 0);
+    dc_menu_draw_str(220, "START GAME", selection == 0);
+    dc_menu_draw_str(260, "VMU SAVE INFO", selection == 1);
+    dc_menu_draw_str(300, "CHEAT MANAGER", selection == 2);
+    dc_menu_draw_str(370, "DPAD MOVE   A SELECT", 0);
+    dc_menu_draw_str(410, "B BACK", 0);
   }
+  dc_menu_present();
 }
 
 static void RunCheatManager(int *quit) {
@@ -261,7 +259,7 @@ static int RunMainMenu(int *quit) {
   int selection = 0, info_page = 0;
   uint32_t previous = 0;
   unsigned frame = 0;
-  bfont_set_encoding(BFONT_CODE_ISO8859_1);
+  dc_menu_init();
   g_menu_music = 1;
   while (!*quit) {
     int present = 0;
@@ -281,7 +279,6 @@ static int RunMainMenu(int *quit) {
       else { RunCheatManager(quit); }
     }
     DrawMainMenu(selection, frame, info_page);
-    dc_present(g_my_pixels);
     dc_audio_poll();
     dc_wait_vbl();
     ++frame;
