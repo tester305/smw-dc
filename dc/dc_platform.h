@@ -28,6 +28,8 @@ void dc_audio_poll(void);
 void dc_audio_stop(void);
 uint64_t dc_time_us(void);
 uint8_t *dc_load_file(const char *path, size_t *size);
+int dc_sram_load(uint8_t *dst, size_t size); /* 1 loaded, 0 absent, -1 invalid/error */
+int dc_sram_store(const uint8_t *src, size_t size); /* 0 saved, -1 error */
 void dc_fatal(const char *msg);                      /* shows msg for a few seconds, then exits */
 void dc_shutdown(void);
 
