@@ -64,6 +64,15 @@ int dc_init(void) {
  * Scale the 256x224 source to the active progressive display mode. This also
  * keeps the menu visible because it uses the same 256-pixel-wide source buffer.
  */
+void dc_boot_mark(const char *message) {
+  if (!message || !vram_s || !vid_mode) return;
+  vid_clear(0, 0, 0);
+  bfont_set_encoding(BFONT_CODE_ISO8859_1);
+  bfont_set_foreground_color(0xFFFF);
+  bfont_set_background_color(0x0000);
+  bfont_draw_str(vram_s + 12 * vid_mode->width + 12, vid_mode->width, true, message);
+}
+
 void dc_present(const uint16_t *img) {
   if (!img || !vram_s || g_fb_width <= 0 || g_fb_height <= 0)
     return;
