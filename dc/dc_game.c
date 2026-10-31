@@ -65,19 +65,16 @@ const uint8 *FindPtrInAsset(int asset, uint32 addr) {
 /* ---- assets ---- */
 static void LoadAssets(void) {
   size_t length = 0;
-  dc_boot_mark("BOOT 2A: OPENING ASSET FILE");
   uint8 *data = dc_load_file("/rd/smw_assets.dat", &length);
   if (!data)
     Die("ASSET FILE OPEN/READ FAILED");
 
-  dc_boot_mark("BOOT 2B: CHECKING ASSET HEADER");
   static const char kSig[] = { kAssets_Sig };
   if (length < 16 + 32 + 32 + 8 + kNumberOfAssets * 4 ||
       memcmp(data, kSig, 48) != 0 ||
       *(uint32 *)(data + 80) != kNumberOfAssets)
     Die("ASSET HEADER INVALID");
 
-  dc_boot_mark("BOOT 2C: INDEXING 178 ASSETS");
   uint32 offset = 88 + kNumberOfAssets * 4 + *(uint32 *)(data + 84);
   for (size_t i = 0; i < kNumberOfAssets; i++) {
     uint32 size = *(uint32 *)(data + 88 + i * 4);
@@ -88,7 +85,6 @@ static void LoadAssets(void) {
     g_asset_ptrs[i] = data + offset;
     offset += size;
   }
-  dc_boot_mark("BOOT 2D: ASSETS READY");
 }
 /* ---- audio: the DSP renders 534 stereo frames per game frame at 32 kHz ---- */
 enum { kAudioRate = 32000, kAudioBlock = 534 };
@@ -295,16 +291,11 @@ static int RunMainMenu(int *quit) {
   return 0;
 }
 
-static void BootMark(const char *message) {
-  dc_boot_mark(message);
-}
-
 int main(int argc, char **argv) {
   (void)argc; (void)argv;
 
   if (dc_init() != 0)
-    dc_fatal("BOOT 1: VIDEO INIT FAILED");
-  BootMark("BOOT 1: VIDEO OK");
+    dc_fatal("VIDEO INIT FAILED");
 
   /* What smw.ini used to provide. */
   g_config.new_renderer = true;
@@ -313,31 +304,30 @@ int main(int argc, char **argv) {
   g_config.audio_channels = 2;
   g_config.audio_samples = 512;
 
-  BootMark("BOOT 2: LOADING ASSETS");
+  /* Show the front-end immediately; loading the SNES data happens on Start. */
+  dc_cheats_init();
+  if (dc_audio_start(AudioFill, kAudioRate) != 0)
+    Die("AUDIO INIT FAILED");
+
+  int quit = 0;
+  if (!RunMainMenu(&quit) || quit) {
+    dc_shutdown();
+    return 0;
+  }
+
   LoadAssets();
 
-  BootMark("BOOT 3: INITIALIZING SNES");
   if (!SnesInit(NULL, 0))          /* no ROM: pure C reimplementation */
-    Die("BOOT 3: SNES INIT FAILED");
+    Die("SNES INIT FAILED");
 
-  BootMark("BOOT 4: INITIALIZING AUDIO");
   g_spc_player = SmwSpcPlayer_Create();
-  if (!g_spc_player) Die("BOOT 4: SPC PLAYER CREATE FAILED");
+  if (!g_spc_player) Die("SPC PLAYER CREATE FAILED");
   g_spc_player->initialize(g_spc_player);
 
   PpuBeginDrawing(g_snes->ppu, g_pixels, 256 * 4, 0);
   PpuBeginDrawing(g_my_ppu, (uint8_t *)g_my_pixels, 256 * sizeof(g_my_pixels[0]), 0);
 
   RtlReadSram();
-  dc_cheats_init();
-
-  BootMark("BOOT 5: AUDIO OK");
-  if (dc_audio_start(AudioFill, kAudioRate) != 0)
-    Die("BOOT 5: AUDIO INIT FAILED");
-
-  BootMark("BOOT 6: MENU STARTING");
-  int quit = 0;
-  if (!RunMainMenu(&quit) || quit) { dc_shutdown(); return 0; }
 
   const uint64_t kFrameUs = 16667;
   int show_perf = 0, skip_now = 0;
