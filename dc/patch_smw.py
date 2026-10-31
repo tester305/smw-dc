@@ -797,3 +797,39 @@ if two_bpp_mark not in ppu:
 else:
     print("patch_smw: 2bpp planar pixel LUT already present")
 
+
+
+# --- 14. route cartridge SRAM through the Dreamcast VMU --------------------
+# Replace the desktop frontend's saves/*.srm file access with the VMU package
+# backend. The platform code handles package parsing and the /vmu/a1 path.
+rtl_path = root / "src/common_rtl.c"
+rtl = read(rtl_path)
+rtl_eol = "\r\n" if "\r\n" in rtl else "\n"
+rtl_mark = "/* DC-PATCH: VMU SRAM persistence */"
+if rtl_mark not in rtl:
+    read_fn = re.compile(r"void RtlReadSram\(void\) \{.*?^\}\s*", re.M | re.S)
+    write_fn = re.compile(r"void RtlWriteSram\(void\) \{.*?^\}\s*", re.M | re.S)
+    read_new = (
+        "extern int dc_sram_load(uint8 *dst, size_t size);" + rtl_eol +
+        "extern int dc_sram_store(const uint8 *src, size_t size);" + rtl_eol +
+        rtl_mark + rtl_eol +
+        "void RtlReadSram(void) {" + rtl_eol +
+        "  if (dc_sram_load(g_sram, (size_t)g_sram_size) > 0) {" + rtl_eol +
+        "    ByteArray_Resize(&state_recorder.base_snapshot, g_sram_size);" + rtl_eol +
+        "    memcpy(state_recorder.base_snapshot.data, g_sram, g_sram_size);" + rtl_eol +
+        "  }" + rtl_eol + "}" + rtl_eol
+    )
+    write_new = (
+        'void RtlWriteSram(void) {' + rtl_eol +
+        '  if (dc_sram_store(g_sram, (size_t)g_sram_size) != 0)' + rtl_eol +
+        '    fprintf(stderr, "Unable to save SRAM to VMU\\n");' + rtl_eol +
+        "}" + rtl_eol
+    )
+    rtl, n1 = read_fn.subn(lambda _: read_new, rtl, count=1)
+    rtl, n2 = write_fn.subn(lambda _: write_new, rtl, count=1)
+    if n1 != 1 or n2 != 1:
+        sys.exit("common_rtl.c: SRAM function anchors not found - update patch_smw.py")
+    write(rtl_path, rtl)
+    print("patch_smw: routes SRAM load/save through the VMU")
+else:
+    print("patch_smw: VMU SRAM persistence already present")
