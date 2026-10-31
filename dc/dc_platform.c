@@ -13,6 +13,8 @@
 #include <dc/sound/sound.h>
 #include <dc/sound/stream.h>
 #include <dc/biosfont.h>
+#include <dc/fs_vmu.h>
+#include <dc/vmu_pkg.h>
 
 #include "dc_platform.h"
 
@@ -32,6 +34,7 @@ static pvr_ptr_t g_txr;
 static pvr_poly_hdr_t g_hdr;
 static pvr_vertex_t g_vert[4];
 static int g_pvr_on;
+static int g_vmu_fs_ready;
 
 static snd_stream_hnd_t g_stream = -1;
 static dc_audio_fill_fn g_fill;
@@ -46,6 +49,10 @@ static void set_vertex(pvr_vertex_t *v, float x, float y, float u, float t, uint
 }
 
 int dc_init(void) {
+  /* VMU support is optional: boot normally when no card is inserted. */
+  g_vmu_fs_ready = (fs_vmu_init() == 0);
+  if (!g_vmu_fs_ready) fprintf(stderr, "VMU filesystem unavailable\n");
+
   /* Reset video state (also covers coming back from the BIOS menu). */
   int cable = vid_check_cable();
   int dm = (cable == CT_VGA) ? DM_640x480_VGA : DM_640x480_NTSC_IL;
@@ -187,8 +194,61 @@ uint8_t *dc_load_file(const char *path, size_t *size) {
   return buf;
 }
 
+/* SRAM is stored as a BIOS-visible VMU package in controller port 1, slot 1. */
+#define DC_VMU_SAVE_PATH "/vmu/a1/SMW.SRM"
+
+int dc_sram_load(uint8_t *dst, size_t len) {
+  if (!g_vmu_fs_ready) return 0;
+  FILE *f = fopen(DC_VMU_SAVE_PATH, "rb");
+  if (!f) return 0; /* No existing save. */
+  if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
+  long file_len = ftell(f);
+  if (file_len <= 0 || file_len > 65536 || fseek(f, 0, SEEK_SET) != 0) {
+    fclose(f);
+    return -1;
+  }
+  uint8_t *raw = (uint8_t *)malloc((size_t)file_len);
+  if (!raw) { fclose(f); return -1; }
+  size_t got = fread(raw, 1, (size_t)file_len, f);
+  fclose(f);
+  vmu_pkg_t pkg;
+  int ok = (got == (size_t)file_len &&
+            vmu_pkg_parse(raw, (size_t)file_len, &pkg) == 0 &&
+            pkg.data_len == (int)len);
+  if (ok) memcpy(dst, pkg.data, len);
+  free(raw);
+  if (!ok) fprintf(stderr, "VMU save is invalid or has the wrong SRAM size\n");
+  return ok ? 1 : -1;
+}
+
+int dc_sram_store(const uint8_t *src, size_t len) {
+  if (!g_vmu_fs_ready || len > 32768) return -1;
+  vmu_pkg_t pkg;
+  memset(&pkg, 0, sizeof(pkg));
+  snprintf(pkg.desc_short, sizeof(pkg.desc_short), "SUPER MARIO");
+  snprintf(pkg.desc_long, sizeof(pkg.desc_long), "Super Mario World Save");
+  snprintf(pkg.app_id, sizeof(pkg.app_id), "SMW-DC");
+  pkg.data_len = (int)len;
+  pkg.data = src;
+  uint8_t *raw = NULL;
+  int raw_len = 0;
+  if (vmu_pkg_build(&pkg, &raw, &raw_len) != 0 || !raw || raw_len <= 0)
+    return -1;
+  FILE *f = fopen(DC_VMU_SAVE_PATH, "wb");
+  if (!f) { free(raw); return -1; }
+  size_t wrote = fwrite(raw, 1, (size_t)raw_len, f);
+  int close_result = fclose(f);
+  free(raw);
+  if (wrote != (size_t)raw_len || close_result != 0) {
+    fprintf(stderr, "Unable to finish writing VMU save\n");
+    return -1;
+  }
+  return 0;
+}
+
 void dc_shutdown(void) {
   dc_audio_stop();
+  if (g_vmu_fs_ready) { fs_vmu_shutdown(); g_vmu_fs_ready = 0; }
   if (g_pvr_on) {
     if (g_txr) pvr_mem_free(g_txr);
     pvr_shutdown();
