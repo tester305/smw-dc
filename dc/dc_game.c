@@ -301,17 +301,18 @@ int main(int argc, char **argv) {
   g_config.audio_channels = 2;
   g_config.audio_samples = 512;
 
-  /* Show the front-end immediately; loading the SNES data happens on Start. */
+  /* Match smb-dc: draw and run the BIOS-framebuffer menu before audio/PVR/game init. */
   dc_cheats_init();
-  g_menu_music = 1; /* Audio callbacks must not touch the uninitialized SNES APU. */
-  if (dc_audio_start(AudioFill, kAudioRate) != 0)
-    Die("AUDIO INIT FAILED");
-
   int quit = 0;
   if (!RunMainMenu(&quit) || quit) {
     dc_shutdown();
     return 0;
   }
+
+  /* Start audio only after the user chooses Start, as in smb-dc. */
+  g_menu_music = 0;
+  if (dc_audio_start(AudioFill, kAudioRate) != 0)
+    Die("AUDIO INIT FAILED");
 
   LoadAssets();
 
