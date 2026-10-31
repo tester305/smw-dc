@@ -8,7 +8,7 @@
 static dc_cheat_t g_cheats[DC_CHEAT_MAX];
 static int g_count;
 
-static int decode(const char *input, uint32_t *address, uint8_t *value) {
+int dc_cheats_decode_code(const char *input, uint32_t *address, uint8_t *value) {
   static const char encoded[] = "df4709156bc8a23e";
   static const char plain[] = "0123456789abcdef";
   char code[9];
@@ -48,7 +48,7 @@ void dc_cheats_init(void) {
   if (dc_cheats_load((uint8_t *)g_cheats, sizeof(g_cheats)) == 0) {
     for (int i = 0; i < DC_CHEAT_MAX; ++i) {
       if (g_cheats[i].code[0] && g_cheats[i].code[8] == 0 &&
-          decode(g_cheats[i].code, &g_cheats[i].address, &g_cheats[i].value)) {
+          dc_cheats_decode_code(g_cheats[i].code, &g_cheats[i].address, &g_cheats[i].value)) {
         if (g_cheats[i].enabled > 1) g_cheats[i].enabled = 0;
         g_count = i + 1;
       } else {
@@ -68,7 +68,7 @@ const dc_cheat_t *dc_cheats_get(int i) {
 int dc_cheats_add(const char *code) {
   if (g_count >= DC_CHEAT_MAX) return -1;
   uint32_t address; uint8_t value;
-  if (!decode(code, &address, &value)) return -2;
+  if (!dc_cheats_decode_code(code, &address, &value)) return -2;
   dc_cheat_t *c = &g_cheats[g_count];
   memset(c, 0, sizeof(*c));
   int n = 0;
