@@ -88,7 +88,9 @@ int dc_init(void) {
 
 void dc_present(const uint16_t *img) {
   pvr_wait_render_done();
-  pvr_txr_load(img, g_txr, TXR_W * 224 * 2);
+  /* Upload the complete 256x256 allocation. The visible image occupies the
+     first 224 rows; the remaining rows are black padding for the texture. */
+  pvr_txr_load(img, g_txr, TXR_BYTES);
   pvr_wait_ready();
   pvr_scene_begin();
   pvr_list_begin(PVR_LIST_OP_POLY);
