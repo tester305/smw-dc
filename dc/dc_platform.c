@@ -7,6 +7,7 @@
 #include <kos/init.h>
 #include <arch/timer.h>
 #include <dc/video.h>
+#include <dc/flashrom.h>
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
 #include <dc/sound/sound.h>
@@ -34,10 +35,22 @@ static snd_stream_hnd_t g_stream = -1;
 static dc_audio_fill_fn g_fill;
 static int16_t g_abuf[AUDIO_BUF_BYTES / 2] __attribute__((aligned(32)));
 
+/* Select the analogue television standard from the console region. The old
+ * code always forced NTSC 480i on every non-VGA cable; PAL Dreamcasts (common
+ * in Europe) then produce a signal many PAL displays will show as a black
+ * screen. */
+static int dc_display_mode(void) {
+  int cable = vid_check_cable();
+  if (cable == CT_VGA) return DM_640x480_VGA;
+  int region = flashrom_get_region();
+  return (region == FLASHROM_REGION_EUROPE)
+           ? DM_640x480_PAL_IL
+           : DM_640x480_NTSC_IL;
+}
+
 int dc_init(void) {
   /* Set up the framebuffer first; VMU support is optional. */
-  int cable = vid_check_cable();
-  int dm = (cable == CT_VGA) ? DM_640x480_VGA : DM_640x480_NTSC_IL;
+  int dm = dc_display_mode();
   vid_set_mode(dm, PM_RGB565);
   vid_clear(0, 0, 0);
 
@@ -273,8 +286,7 @@ void dc_shutdown(void) {
 
 void dc_fatal(const char *msg) {
   dc_shutdown();
-  int cable = vid_check_cable();
-  vid_set_mode(cable == CT_VGA ? DM_640x480_VGA : DM_640x480_NTSC_IL, PM_RGB565);
+  vid_set_mode(dc_display_mode(), PM_RGB565);
   vid_clear(0, 0, 0);
   int pitch = (vid_mode && vid_mode->width) ? (int)vid_mode->width : 640;
   bfont_set_encoding(BFONT_CODE_ISO8859_1);
