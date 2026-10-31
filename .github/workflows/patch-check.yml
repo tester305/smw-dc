@@ -1,11 +1,9 @@
-
 name: Check Dreamcast source patch
 
 on:
   pull_request:
     paths:
       - "dc/patch_smw.py"
-      - "dc/ppu_2bpp_lut.diff"
       - ".github/workflows/patch-check.yml"
   workflow_dispatch:
 
@@ -33,12 +31,16 @@ jobs:
           git -C smw fetch -q --depth 1 origin eae20c65c58930c8b62c76188d259579ad4130f1
           git -C smw checkout -q -f FETCH_HEAD
 
-      - name: Validate reviewable 2bpp C diff against pristine upstream
-        run: git -C smw apply --check ../dc/ppu_2bpp_lut.diff
+      - name: Apply patcher and verify the generated C fast path
+        run: |
+          python3 dc/patch_smw.py smw
+          grep -q 'DC-PATCH: SH-4 2bpp pixel LUT' smw/src/snes/ppu.c
+          grep -q 'dc_decode_2bpp(bits)' smw/src/snes/ppu.c
+          grep -q 'DO_PIXEL_FAST_HFLIP' smw/src/snes/ppu.c
+          grep -q 'DO_PIXEL_FAST(7)' smw/src/snes/ppu.c
 
       - name: Apply patch twice and verify idempotence
         run: |
-          python3 dc/patch_smw.py smw
           git -C smw diff --binary > /tmp/patch-first.diff
           python3 dc/patch_smw.py smw
           git -C smw diff --binary > /tmp/patch-second.diff
