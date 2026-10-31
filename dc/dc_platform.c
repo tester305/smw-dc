@@ -38,14 +38,21 @@ static int dc_display_mode(void) {
 }
 
 int dc_init(void) {
+  int i;
   int mode = dc_display_mode();
+
+  /* Match the SMB front end's full video reset after the BIOS hand-off. */
   vid_set_mode(mode, PM_RGB565);
+  vid_empty();
+  vid_set_mode(mode, PM_RGB565);
+  vid_border_color(0, 0, 0);
+  vid_clear(0, 0, 0);
+  dc_menu_init();
+  for (i = 0; i < 8; ++i) vid_waitvbl();
+
   if (!vid_mode || !vram_s || vid_mode->width < 256 || vid_mode->height < 224)
     return -1;
-  vid_clear(0, 0, 0);
-  for (int i = 0; i < 2; ++i) vid_waitvbl();
 
-  /* VMU setup must not prevent video from being brought up. */
   g_vmu_fs_ready = (fs_vmu_init() == 0);
   if (!g_vmu_fs_ready) fprintf(stderr, "VMU filesystem unavailable\\n");
   return 0;
