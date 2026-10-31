@@ -252,6 +252,7 @@ static void RunCheatManager(int *quit) {
       MenuText(90, 198, 0xFFFF, "B BACK");
     }
     dc_present(g_my_pixels);
+    dc_audio_poll();
     dc_wait_vbl();
     ++frame;
   }
