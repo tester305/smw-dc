@@ -45,5 +45,6 @@ Hold-and-press **A+B+X+Y** (without Start) toggles a timing overlay: logic ms x1
 * Speed is unmeasured. If a frame does not fit in ~16 ms the next picture is skipped so game speed holds at 60 logic frames/s.
 * The unaligned-access patch covers every `*(uint16 *)` / `*(uint32 *)` cast and `WORD()/DWORD()`. A misaligned pointer passed
   into a function taking a plain `uint16 *` would still fault; KOS prints the PC, and `sh-elf-addr2line` finds the line.
-* Save games (SRAM) are not persisted yet; VMU saving is the next step.
+* Cartridge SRAM is stored as a BIOS-visible VMU package at `/vmu/a1/SMW.SRM` (controller port 1, VMU slot 1). The VMU must be formatted and have enough free blocks. If no save exists, the game starts fresh.
+* Player 2 is read from the second Dreamcast controller and feeds SMW's native second joypad input. As in the original game, two-player mode alternates turns; it is not simultaneous co-op.
 * Upstream also contains the All-Stars SMB1 / Lost Levels reimplementations (not built here).
