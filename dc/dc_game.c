@@ -256,33 +256,65 @@ static void RunCheatManager(int *quit) {
 }
 
 static int RunMainMenu(int *quit) {
+  /* SMB-DC style edge-triggered menu: draw first, then poll controls and
+     debounce directional input so a held button doesn't race through items. */
   int selection = 0, info_page = 0;
   uint32_t previous = 0;
+  int debounce = 0;
   unsigned frame = 0;
+
   dc_menu_init();
   g_menu_music = 1;
+  DrawMainMenu(selection, frame, info_page);
+
   while (!*quit) {
     int present = 0;
     uint32_t pad = dc_read_pad(0, quit, &present);
     uint32_t pressed = pad & ~previous;
     previous = pad;
-    if (pressed & DC_PAD_UP) selection = (selection + 2) % 3;
-    if (pressed & DC_PAD_DOWN) selection = (selection + 1) % 3;
-    if (pressed & DC_PAD_B) {
-      if (info_page) info_page = 0;
-      else { g_menu_music = 0; g_audio_pos = kAudioBlock; return 0; }
+
+    if (debounce > 0) {
+      --debounce;
+    } else {
+      if (pressed & DC_PAD_UP) {
+        selection = (selection + 2) % 3;
+        debounce = 12;
+      } else if (pressed & DC_PAD_DOWN) {
+        selection = (selection + 1) % 3;
+        debounce = 12;
+      }
+
+      if (pressed & DC_PAD_B) {
+        if (info_page) info_page = 0;
+        else {
+          g_menu_music = 0;
+          g_audio_pos = kAudioBlock;
+          return 0;
+        }
+      }
+
+      if (pressed & DC_PAD_A) {
+        if (info_page) info_page = 0;
+        else if (selection == 0) {
+          g_menu_music = 0;
+          g_audio_pos = kAudioBlock;
+          return 1;
+        } else if (selection == 1) {
+          info_page = 1;
+        } else {
+          RunCheatManager(quit);
+          previous = 0;
+        }
+        debounce = 12;
+      }
     }
-    if (pressed & DC_PAD_A) {
-      if (info_page) info_page = 0;
-      else if (selection == 0) { g_menu_music = 0; g_audio_pos = kAudioBlock; return 1; }
-      else if (selection == 1) info_page = 1;
-      else { RunCheatManager(quit); }
-    }
+
     DrawMainMenu(selection, frame, info_page);
     dc_audio_poll();
     dc_wait_vbl();
     ++frame;
   }
+
   g_menu_music = 0;
   g_audio_pos = kAudioBlock;
   return 0;
