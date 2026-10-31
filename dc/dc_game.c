@@ -65,19 +65,19 @@ const uint8 *FindPtrInAsset(int asset, uint32 addr) {
 /* ---- assets ---- */
 static void LoadAssets(void) {
   size_t length = 0;
-  BootMark("BOOT 2A: OPENING ASSET FILE");
+  dc_boot_mark("BOOT 2A: OPENING ASSET FILE");
   uint8 *data = dc_load_file("/rd/smw_assets.dat", &length);
   if (!data)
     Die("ASSET FILE OPEN/READ FAILED");
 
-  BootMark("BOOT 2B: CHECKING ASSET HEADER");
+  dc_boot_mark("BOOT 2B: CHECKING ASSET HEADER");
   static const char kSig[] = { kAssets_Sig };
   if (length < 16 + 32 + 32 + 8 + kNumberOfAssets * 4 ||
       memcmp(data, kSig, 48) != 0 ||
       *(uint32 *)(data + 80) != kNumberOfAssets)
     Die("ASSET HEADER INVALID");
 
-  BootMark("BOOT 2C: INDEXING 178 ASSETS");
+  dc_boot_mark("BOOT 2C: INDEXING 178 ASSETS");
   uint32 offset = 88 + kNumberOfAssets * 4 + *(uint32 *)(data + 84);
   for (size_t i = 0; i < kNumberOfAssets; i++) {
     uint32 size = *(uint32 *)(data + 88 + i * 4);
@@ -88,7 +88,7 @@ static void LoadAssets(void) {
     g_asset_ptrs[i] = data + offset;
     offset += size;
   }
-  BootMark("BOOT 2D: ASSETS READY");
+  dc_boot_mark("BOOT 2D: ASSETS READY");
 }
 /* ---- audio: the DSP renders 534 stereo frames per game frame at 32 kHz ---- */
 enum { kAudioRate = 32000, kAudioBlock = 534 };
