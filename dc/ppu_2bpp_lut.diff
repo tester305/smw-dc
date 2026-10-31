@@ -1,0 +1,38 @@
+diff --git a/src/snes/ppu.c b/src/snes/ppu.c
+index 0000000..0000000 100644
+--- a/src/snes/ppu.c
++++ b/src/snes/ppu.c
+@@ -1,6 +1,10 @@
+ #define DO_PIXEL_HFLIP(i) do { \
+   pixel = (bits >> (7 - i)) & 1 | (bits >> (14 - i)) & 2; \
+   if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)
++#define DO_PIXEL_FAST(i) do { \
++  pixel = (dc_pixels >> ((i) * 2)) & 3; \
++  if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)
++#define DO_PIXEL_FAST_HFLIP(i) do { \
++  pixel = (dc_pixels >> ((7 - (i)) * 2)) & 3; \
++  if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)
+ #define READ_BITS(ta, tile) (addr = &ppu->vram[(ta) + (tile) * 8 & 0x7fff], addr[0])
+@@ -1,18 +5,20 @@
+       uint32 bits = READ_BITS(ta, tile & 0x3ff);
+       if (bits) {
++        uint32_t dc_pixels = dc_decode_2bpp(bits);
+         z += ((tile & 0x1c00) >> kPaletteShift);
+         if (tile & 0x4000) {
+-          DO_PIXEL(0); DO_PIXEL(1); DO_PIXEL(2); DO_PIXEL(3);
+-          DO_PIXEL(4); DO_PIXEL(5); DO_PIXEL(6); DO_PIXEL(7);
++          DO_PIXEL_FAST(0); DO_PIXEL_FAST(1); DO_PIXEL_FAST(2); DO_PIXEL_FAST(3);
++          DO_PIXEL_FAST(4); DO_PIXEL_FAST(5); DO_PIXEL_FAST(6); DO_PIXEL_FAST(7);
+         } else {
+-          DO_PIXEL_HFLIP(0); DO_PIXEL_HFLIP(1); DO_PIXEL_HFLIP(2); DO_PIXEL_HFLIP(3);
+-          DO_PIXEL_HFLIP(4); DO_PIXEL_HFLIP(5); DO_PIXEL_HFLIP(6); DO_PIXEL_HFLIP(7);
++          DO_PIXEL_FAST_HFLIP(0); DO_PIXEL_FAST_HFLIP(1); DO_PIXEL_FAST_HFLIP(2); DO_PIXEL_FAST_HFLIP(3);
++          DO_PIXEL_FAST_HFLIP(4); DO_PIXEL_FAST_HFLIP(5); DO_PIXEL_FAST_HFLIP(6); DO_PIXEL_FAST_HFLIP(7);
+         }
+       }
+@@ -1,4 +1,6 @@
+ #undef DO_PIXEL
+ #undef DO_PIXEL_HFLIP
++#undef DO_PIXEL_FAST
++#undef DO_PIXEL_FAST_HFLIP
+ }
