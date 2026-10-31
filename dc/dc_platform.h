@@ -19,7 +19,6 @@ enum {
 typedef void (*dc_audio_fill_fn)(int16_t *dst_interleaved_stereo, int frames);
 
 int  dc_init(void);
-void dc_boot_mark(const char *message);                                  /* progressive RGB565 framebuffer; 0 = ok */
 void dc_present(const uint16_t *rgb565_256x256);     /* scale and present a 256x224 RGB565 image */
 void dc_wait_vbl(void);
 uint32_t dc_read_pad(int port, int *quit, int *present); /* SNES-layout bits; *quit set on A+B+X+Y+Start */
