@@ -7,7 +7,6 @@
 #include <kos/init.h>
 #include <arch/timer.h>
 #include <dc/video.h>
-#include <dc/pvr.h>
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
 #include <dc/sound/sound.h>
@@ -27,9 +26,6 @@ KOS_INIT_FLAGS(INIT_DEFAULT);
 /* 1 = sharp 2x (512x448 centred on 640x480); 0 = stretch to the whole screen. */
 #define INTEGER_SCALE 1
 
-static pvr_ptr_t g_texture;
-static pvr_poly_hdr_t g_poly_hdr;
-static pvr_vertex_t g_vertices[4];
 static int g_vmu_fs_ready;
 
 static snd_stream_hnd_t g_stream = -1;
@@ -41,55 +37,42 @@ static int dc_display_mode(void) {
   return vid_check_cable() == CT_VGA ? DM_640x480_VGA : DM_640x480_NTSC_IL;
 }
 
-static void dc_set_vertex(pvr_vertex_t *v, float x, float y, float u, float t,
-                          uint32_t flags) {
-  v->flags = flags; v->x = x; v->y = y; v->z = 1.0f;
-  v->u = u; v->v = t;
-  v->argb = PVR_PACK_COLOR(1.0f, 1.0f, 1.0f, 1.0f);
-  v->oargb = 0;
-}
-
 int dc_init(void) {
   int mode = dc_display_mode();
   vid_set_mode(mode, PM_RGB565);
-  vid_empty();
-  vid_set_mode(mode, PM_RGB565);
-  vid_border_color(0, 0, 0);
+  if (!vid_mode || !vram_s || vid_mode->width < 256 || vid_mode->height < 224)
+    return -1;
   vid_clear(0, 0, 0);
-  for (int i = 0; i < 8; ++i) vid_waitvbl();
+  for (int i = 0; i < 2; ++i) vid_waitvbl();
 
-  if (pvr_init_defaults() != 0) return -1;
-  g_texture = pvr_mem_malloc(256 * 256 * 2);
-  if (!g_texture) { pvr_shutdown(); return -1; }
-
-  pvr_poly_cxt_t cxt;
-  pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY,
-                   PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED,
-                   256, 256, g_texture, PVR_FILTER_NEAREST);
-  pvr_poly_compile(&g_poly_hdr, &cxt);
-  dc_set_vertex(&g_vertices[0], 64, 0, 0, 0, PVR_CMD_VERTEX);
-  dc_set_vertex(&g_vertices[1], 576, 0, 1, 0, PVR_CMD_VERTEX);
-  dc_set_vertex(&g_vertices[2], 64, 480, 0, 224.0f/256.0f, PVR_CMD_VERTEX);
-  dc_set_vertex(&g_vertices[3], 576, 480, 1, 224.0f/256.0f, PVR_CMD_VERTEX_EOL);
-
+  /* VMU setup must not prevent video from being brought up. */
   g_vmu_fs_ready = (fs_vmu_init() == 0);
   if (!g_vmu_fs_ready) fprintf(stderr, "VMU filesystem unavailable\\n");
   return 0;
 }
 
-/* Upload the 256x224 RGB565 frame and draw it as a PVR textured quad. */
+/* Software-scale the 256x224 RGB565 image directly into the video framebuffer.
+   This deliberately avoids the PVR path so the front-end is visible on boot. */
 void dc_present(const uint16_t *img) {
-  if (!img || !g_texture) return;
-  pvr_wait_render_done();
-  pvr_txr_load((void *)img, g_texture, 256 * 256 * 2);
-  pvr_wait_ready();
-  pvr_scene_begin();
-  pvr_list_begin(PVR_LIST_OP_POLY);
-  pvr_prim(&g_poly_hdr, sizeof(g_poly_hdr));
-  for (int i = 0; i < 4; ++i)
-    pvr_prim(&g_vertices[i], sizeof(pvr_vertex_t));
-  pvr_list_finish();
-  pvr_scene_finish();
+  if (!img || !vid_mode || !vram_s) return;
+
+  const int screen_w = (int)vid_mode->width;
+  const int screen_h = (int)vid_mode->height;
+  int scale = screen_w / 256;
+  if (scale > screen_h / 224) scale = screen_h / 224;
+  if (scale < 1) scale = 1;
+  const int draw_w = 256 * scale;
+  const int draw_h = 224 * scale;
+  const int left = (screen_w - draw_w) / 2;
+  const int top = (screen_h - draw_h) / 2;
+  uint16_t *fb = (uint16_t *)vram_s;
+
+  for (int y = 0; y < draw_h; ++y) {
+    const uint16_t *src = img + (y / scale) * 256;
+    uint16_t *dst = fb + (top + y) * screen_w + left;
+    for (int x = 0; x < draw_w; ++x)
+      dst[x] = src[x / scale];
+  }
 }
 
 void dc_wait_vbl(void) { vid_waitvbl(); }
@@ -283,8 +266,6 @@ int dc_cheats_store(const uint8_t *src, size_t len) {
 
 void dc_shutdown(void) {
   dc_audio_stop();
-  if (g_texture) { pvr_mem_free(g_texture); g_texture = NULL; }
-  pvr_shutdown();
   if (g_vmu_fs_ready) { fs_vmu_shutdown(); g_vmu_fs_ready = 0; }
 }
 
