@@ -504,3 +504,195 @@ if empty_mark not in ppu:
     print("patch_smw: skips empty 4bpp background and sprite rows")
 else:
     print("patch_smw: empty 4bpp row skipping already present")
+
+
+# --- 10. memoize the per-pixel colour-math path ------------------------------
+# SMW leaves colour math enabled on nearly every scanline (typically "add subscreen"
+# with only the backdrop layer enabled, BG2 on the subscreen), so the generic
+# per-pixel math loop - ~50 SH-4 instructions per pixel - runs for most of the frame.
+# A math pixel's result is a pure function of (main palette index, sub palette index)
+# plus per-line state (fixed colour, half/subtract/add-subscreen flags, clip mask,
+# palette + brightness).  Memoize it in a table tagged with a generation number that
+# changes whenever any of that state changes; pixels whose layer has math disabled
+# use the cached palette table directly.  Output is bit-identical to upstream.
+ppu = read(ppu_path)
+math_eol = "\r\n" if "\r\n" in ppu else "\n"
+math_mark = "/* DC-PATCH: memoized colour math */"
+if math_mark not in ppu:
+    def M(text):
+        return text.replace("\n", math_eol)
+
+    whole_start = ppu.find("static NOINLINE void PpuDrawWholeLine(Ppu *ppu, uint y) {")
+    whole_end = ppu.find("static bool ppu_evaluateSprites(Ppu* ppu, int line) {", whole_start)
+    if whole_start < 0 or whole_end < 0:
+        sys.exit("ppu.c: whole-line renderer anchors not found for colour-math memo")
+    whole_fn = ppu[whole_start:whole_end]
+
+    # generation counter bumped whenever the cached palette tables are rebuilt
+    old = "  static bool dc_palette_cache_valid;"
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: palette cache valid-flag anchor not found for colour-math memo")
+    whole_fn = whole_fn.replace(old, old + math_eol + "  static uint32_t dc_palette_gen;", 1)
+    old = "    dc_palette_cache_valid = true;"
+    if whole_fn.count(old) != 1:
+        sys.exit("ppu.c: palette cache refresh anchor not found for colour-math memo")
+    whole_fn = whole_fn.replace(old, "    dc_palette_gen++;" + math_eol + old, 1)
+
+    # replace the whole generic per-pixel loop
+    blk_start = whole_fn.find("      uint8 *half_color_map = ")
+    end_marker = "      } while (dst++, ++i < right);"
+    blk_end = whole_fn.find(end_marker, blk_start)
+    if blk_start < 0 or blk_end < 0:
+        sys.exit("ppu.c: colour-math loop anchors not found - upstream/patch changed, update patch_smw.py")
+    blk_end += len(end_marker)
+    if "ppu->cgram[ppu->bgBuffers[0].data[i] & 0xff]" not in whole_fn[blk_start:blk_end]:
+        sys.exit("ppu.c: colour-math loop has an unexpected shape - update patch_smw.py")
+
+    new_block = M(r'''      /* DC-PATCH: memoized colour math */
+      static uint32_t dc_math_memo[65536];   /* (main idx << 8 | sub idx) -> gen << 16 | rgb565 */
+      static uint32_t dc_math_state, dc_math_pal_gen, dc_math_gen;
+      uint8 *half_color_map = PPU_halfColor(ppu) ? ppu->brightnessMultHalf : ppu->brightnessMult;
+      // Store this in locals
+      math_enabled_cur |= PPU_addSubscreen(ppu) << 8 | PPU_subtractColor(ppu) << 9;
+      {
+        uint32_t state = fixed_color | (uint32_t)(PPU_halfColor(ppu) != 0) << 16 |
+                         (uint32_t)(clip_color_mask != 0) << 17 | (math_enabled_cur & 0x300) << 10;
+        if (state != dc_math_state || dc_palette_gen != dc_math_pal_gen) {
+          dc_math_state = state;
+          dc_math_pal_gen = dc_palette_gen;
+          if ((dc_math_gen = (dc_math_gen + 1) & 0xffff) == 0) {  // generation wrapped: drop stale tags
+            memset(dc_math_memo, 0, sizeof(dc_math_memo));
+            dc_math_gen = 1;
+          }
+        }
+      }
+      const PpuZbufType *dc_main = ppu->bgBuffers[0].data;
+      const PpuZbufType *dc_sub = ppu->bgBuffers[1].data;
+      const uint16_t *dc_rgb = dc_palette_rgb[clip_color_mask != 0];
+      const uint32_t dc_gen = dc_math_gen;
+      const bool dc_addsub = (math_enabled_cur & 0x100) != 0;
+      // Need to check for each pixel whether to use math or not based on the main screen layer.
+      uint32 i = left;
+      do {
+        uint32 m = dc_main[i];
+        uint32 idx = m & 0xff;
+        if (!(math_enabled_cur & (1 << ((m >> 8) & 0xf)))) {
+          dst[0] = dc_rgb[idx];  // no math on this layer: same as the cached palette path
+        } else {
+          uint32 sub = dc_addsub ? (dc_sub[i] & 0xff) : 0;
+          uint32 e = dc_math_memo[idx << 8 | sub];
+          if ((e >> 16) != dc_gen) {
+            uint32 color = ppu->cgram[idx], color2;
+            uint32 r = color & clip_color_mask;
+            uint32 g = (color >> 5) & clip_color_mask;
+            uint32 b = (color >> 10) & clip_color_mask;
+            uint8 *color_map = ppu->brightnessMult;
+            if (dc_addsub) {  // addSubscreen ?
+              if (sub != 0)
+                color2 = ppu->cgram[sub], color_map = half_color_map;
+              else  // Don't halve if PPU_addSubscreen(ppu) && backdrop
+                color2 = fixed_color;
+            } else {
+              color2 = fixed_color, color_map = half_color_map;
+            }
+            uint32 r2 = (color2 & 0x1f), g2 = ((color2 >> 5) & 0x1f), b2 = ((color2 >> 10) & 0x1f);
+            if (math_enabled_cur & 0x200) {  // subtractColor?
+              r = (r >= r2) ? r - r2 : 0;
+              g = (g >= g2) ? g - g2 : 0;
+              b = (b >= b2) ? b - b2 : 0;
+            } else {
+              r += r2;
+              g += g2;
+              b += b2;
+            }
+            uint32_t r8 = color_map[r];
+            uint32_t g8 = color_map[g];
+            uint32_t b8 = color_map[b];
+            e = dc_gen << 16 | (uint16_t)(((r8 >> 3) << 11) | ((g8 >> 2) << 5) | (b8 >> 3));
+            dc_math_memo[idx << 8 | sub] = e;
+          }
+          dst[0] = (uint16_t)e;
+        }
+      } while (dst++, ++i < right);''')
+    whole_fn = whole_fn[:blk_start] + new_block + whole_fn[blk_end:]
+    ppu = ppu[:whole_start] + whole_fn + ppu[whole_end:]
+    write(ppu_path, ppu)
+    print("patch_smw: memoized colour-math compositor path")
+else:
+    print("patch_smw: colour-math memo already present")
+
+
+# --- 11. direct CGRAM writers must invalidate the palette cache ---------------
+# Section 5 only hooks CGRAM writes made through ppu_write().  The game's C code uploads
+# palettes straight into g_ppu->cgram (RtlUpdatePalette) and snapshot loading memcpy()s it,
+# so those writes must mark the cache dirty too or an animated palette could go stale.
+ppu = read(ppu_path)
+dirty_decl_old = "static bool dc_palette_cache_dirty = true;"
+dirty_decl_new = "bool dc_palette_cache_dirty = true;  /* DC-PATCH: shared with common_rtl.c / common_cpu_infra.c */"
+if dirty_decl_old in ppu:
+    ppu = ppu.replace(dirty_decl_old, dirty_decl_new, 1)
+    write(ppu_path, ppu)
+
+rtl_path = root / "src/common_rtl.c"
+rtl = read(rtl_path)
+rtl_eol = "\r\n" if "\r\n" in rtl else "\n"
+if "dc_palette_cache_dirty" not in rtl:
+    old = "void RtlUpdatePalette(const uint16 *src, int dst, int n) {" + rtl_eol
+    if old not in rtl:
+        sys.exit("common_rtl.c: RtlUpdatePalette anchor not found - update patch_smw.py")
+    rtl = rtl.replace(old,
+        "extern bool dc_palette_cache_dirty;  /* DC-PATCH: palette cache invalidation */" + rtl_eol +
+        old + "  dc_palette_cache_dirty = true;" + rtl_eol, 1)
+    write(rtl_path, rtl)
+    print("patch_smw: RtlUpdatePalette invalidates the palette cache")
+
+cpu_path = root / "src/common_cpu_infra.c"
+cpu = read(cpu_path)
+cpu_eol = "\r\n" if "\r\n" in cpu else "\n"
+if "dc_palette_cache_dirty" not in cpu:
+    old = "  memcpy(g_ppu->cgram, s->cgram, sizeof(uint16) * 0x100);" + cpu_eol
+    if cpu.count(old) != 1:
+        sys.exit("common_cpu_infra.c: snapshot cgram load anchor not found - update patch_smw.py")
+    cpu = cpu.replace(old,
+        old + "  { extern bool dc_palette_cache_dirty; dc_palette_cache_dirty = true; }  /* DC-PATCH */" + cpu_eol, 1)
+    write(cpu_path, cpu)
+    print("patch_smw: snapshot load invalidates the palette cache")
+
+
+# --- 12. sprite scan: reject sprites that are not on this line before any other work ----
+# ppu_evaluateSprites() walks all 128 OAM entries on every one of the 224 scanlines.  Most
+# entries are parked off-screen, so check the Y range against the tallest possible sprite
+# first and skip the size/high-OAM lookups for them.  Identical result: a sprite whose row is
+# >= the largest size can never satisfy row < spriteHeight for either size.  The OAM base
+# pointer is hoisted and the index step moved into the for-header so the rejected path is a
+# handful of SH-4 instructions.
+ppu = read(ppu_path)
+spr_eol = "\r\n" if "\r\n" in ppu else "\n"
+spr_mark = "/* DC-PATCH: sprite early-out */"
+if spr_mark not in ppu:
+    def S(text):
+        return text.replace("\n", spr_eol)
+    old = S("  const bool dc_obj_interlace = PPU_objInterlace(ppu);\n")
+    if ppu.count(old) != 1:
+        sys.exit("ppu.c: hoisted sprite register anchor not found for sprite early-out - update patch_smw.py")
+    ppu = ppu.replace(old, old + S(
+        "  " + spr_mark + "\n"
+        "  const uint16 *dc_oam = ppu->oam;\n"
+        "  const int dc_obj_max_h = (dc_obj_interlace ? spriteSizes[dc_obj_size][1] / 2 : spriteSizes[dc_obj_size][1]);\n"), 1)
+    old = S("  for(int i = 0; i < 128; i++) {\n    uint8_t y = ppu->oam[index] >> 8;\n"
+            "    // check if the sprite is on this line and get the sprite size\n"
+            "    uint8_t row = line - y;\n    int spriteSize = ")
+    if ppu.count(old) != 1:
+        sys.exit("ppu.c: sprite scan loop anchor not found for sprite early-out - update patch_smw.py")
+    ppu = ppu.replace(old, S(
+        "  for(int i = 0; i < 128; i++, index += 2) {\n    uint8_t y = dc_oam[index] >> 8;\n"
+        "    // check if the sprite is on this line and get the sprite size\n"
+        "    uint8_t row = line - y;\n    if (row >= dc_obj_max_h) continue;\n    int spriteSize = "), 1)
+    old = S("      }\n    }\n    index += 2;\n  }\n  return tilesFound != 0;")
+    if ppu.count(old) != 1:
+        sys.exit("ppu.c: sprite scan loop tail anchor not found for sprite early-out - update patch_smw.py")
+    ppu = ppu.replace(old, S("      }\n    }\n  }\n  return tilesFound != 0;"), 1)
+    write(ppu_path, ppu)
+    print("patch_smw: sprite scan early-out")
+else:
+    print("patch_smw: sprite early-out already present")
