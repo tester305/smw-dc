@@ -311,7 +311,10 @@ int main(int argc, char **argv) {
   if (dc_audio_start(AudioFill, kAudioRate) != 0)
     Die("Audio initialisation failed");
 
-  int quit = 0;\n  if (!RunMainMenu(&quit) || quit) { dc_shutdown(); return 0; }\n\n  const uint64_t kFrameUs = 16667;
+  int quit = 0;
+  if (!RunMainMenu(&quit) || quit) { dc_shutdown(); return 0; }
+
+  const uint64_t kFrameUs = 16667;
   int show_perf = 0, skip_now = 0;
   uint32_t logic_us = 0, draw_us = 0, skipped = 0;
 
