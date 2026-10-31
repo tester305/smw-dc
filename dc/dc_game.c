@@ -26,6 +26,7 @@
 
 #include "dc_platform.h"
 #include <dc/biosfont.h>
+#include "dc_cheats.h"
 
 /* ---- globals the SDL main.c used to define for the rest of the game ---- */
 bool g_debug_flag;
@@ -175,6 +176,71 @@ static void DrawMainMenu(int selection, unsigned frame, int info_page) {
   }
 }
 
+static void RunCheatManager(int *quit) {
+  static const char hex[] = "0123456789ABCDEF";
+  char code[9] = "00000000";
+  int editing = 0, selected = 0, char_pos = 0;
+  uint32_t previous = 0;
+  unsigned frame = 0;
+  while (!*quit) {
+    int present = 0;
+    uint32_t pad = dc_read_pad(0, quit, &present);
+    uint32_t pressed = pad & ~previous;
+    previous = pad;
+    if (editing) {
+      if (pressed & DC_PAD_LEFT) code[char_pos] = hex[(strchr(hex, code[char_pos]) - hex + 15) & 15];
+      if (pressed & DC_PAD_RIGHT) code[char_pos] = hex[(strchr(hex, code[char_pos]) - hex + 1) & 15];
+      if (pressed & DC_PAD_A) {
+        if (char_pos < 7) ++char_pos;
+        else {
+          int result = dc_cheats_add(code);
+          if (result == 0) editing = 0;
+        }
+      }
+      if (pressed & DC_PAD_B) editing = 0;
+      if (pressed & DC_PAD_START) {
+        if (dc_cheats_add(code) == 0) editing = 0;
+      }
+      DrawMenuBackground(frame);
+      MenuText(38, 34, 0x07E0, "ADD GAME GENIE CODE");
+      char shown[12];
+      snprintf(shown, sizeof(shown), "%.4s-%.4s", code, code + 4);
+      MenuText(50, 94, 0xFFFF, shown);
+      MenuText(50 + char_pos * 12 + (char_pos >= 4 ? 12 : 0), 122, 0x07E0, "^");
+      MenuText(12, 166, 0xFFFF, "LEFT/RIGHT: HEX VALUE");
+      MenuText(12, 190, 0xFFE0, "A: NEXT  START: SAVE  B: CANCEL");
+    } else {
+      int count = dc_cheats_count();
+      if (pressed & DC_PAD_UP && count) selected = (selected + count - 1) % count;
+      if (pressed & DC_PAD_DOWN && count) selected = (selected + 1) % count;
+      if (pressed & DC_PAD_B) return;
+      if (pressed & DC_PAD_Y && count < DC_CHEAT_MAX) {
+        memset(code, '0', 8); code[8] = 0;
+        char_pos = 0; editing = 1;
+      }
+      if (pressed & DC_PAD_A && count) dc_cheats_toggle(selected);
+      if (pressed & DC_PAD_X && count) {
+        dc_cheats_remove(selected);
+        if (selected >= dc_cheats_count() && selected > 0) --selected;
+      }
+      DrawMenuBackground(frame);
+      MenuText(48, 28, 0x07E0, "CHEAT MANAGER");
+      if (!count) MenuText(30, 78, 0xFFFF, "NO SAVED CHEATS");
+      for (int i = 0; i < count && i < 5; ++i) {
+        const dc_cheat_t *ch = dc_cheats_get(i);
+        char line[24];
+        snprintf(line, sizeof(line), "%c %.4s-%.4s", ch->enabled ? '*' : '-', ch->code, ch->code + 4);
+        MenuText(24, 62 + i * 24, i == selected ? 0xFFE0 : 0xFFFF, line);
+      }
+      MenuText(10, 174, 0x07E0, "Y: ADD  A: TOGGLE  X: DELETE");
+      MenuText(54, 198, 0xFFFF, "B: BACK");
+    }
+    dc_present(g_my_pixels);
+    dc_wait_vbl();
+    ++frame;
+  }
+}
+
 static int RunMainMenu(int *quit) {
   int selection = 0, info_page = 0;
   uint32_t previous = 0;
@@ -195,7 +261,7 @@ static int RunMainMenu(int *quit) {
       if (info_page) info_page = 0;
       else if (selection == 0) return 1;
       else if (selection == 1) info_page = 1;
-      else info_page = 2;
+      else { RunCheatManager(quit); }
     }
     if (info_page == 2) {
       DrawMenuBackground(frame);
@@ -239,6 +305,7 @@ int main(int argc, char **argv) {
   PpuBeginDrawing(g_my_ppu, (uint8_t *)g_my_pixels, 256 * sizeof(g_my_pixels[0]), 0);
 
   RtlReadSram();
+  dc_cheats_init();
 
   if (dc_audio_start(AudioFill, kAudioRate) != 0)
     Die("Audio initialisation failed");
