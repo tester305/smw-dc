@@ -698,16 +698,18 @@ else:
     print("patch_smw: sprite early-out already present")
 
 
+
+
 # --- 13. LUT-decode aligned 2bpp background tiles --------------------------
 # Mode-1 BG3 uses 2bpp tiles. Decode the two bitplanes once per tile row,
 # then use packed 2-bit pixels in the full-tile loop instead of repeating
 # bit extraction for each of the eight pixels. Clipped/mosaic paths stay intact.
 ppu = read(ppu_path)
-two_bpp_eol = "\\r\\n" if "\\r\\n" in ppu else "\\n"
+two_bpp_eol = "\r\n" if "\r\n" in ppu else "\n"
 two_bpp_mark = "/* DC-PATCH: SH-4 2bpp pixel LUT */"
 if two_bpp_mark not in ppu:
     def T(text):
-        return text.replace("\\n", two_bpp_eol)
+        return text.replace("\n", two_bpp_eol)
 
     init_end = "  dc_planar_pixel_lut_ready = true;"
     if ppu.count(init_end) != 1:
@@ -724,14 +726,12 @@ if two_bpp_mark not in ppu:
         "    }\n"
         "  }\n" + init_end), 1)
 
-    # Declare the table beside the existing 4bpp LUT.
     lut_anchor = "static uint32_t dc_planar_pixel_lut[4][256];"
     if ppu.count(lut_anchor) != 1:
         sys.exit("ppu.c: 4bpp LUT declaration anchor not found")
     ppu = ppu.replace(lut_anchor, lut_anchor + T(
         "\nstatic uint16_t dc_planar_2bpp_lut[2][256];"), 1)
 
-    # Add the decoder beside dc_decode_4bpp().
     decode_anchor = T(
         "static inline uint32_t dc_decode_4bpp(uint32_t planes) {\n"
         "  return dc_planar_pixel_lut[0][planes & 0xff] |\n"
@@ -755,12 +755,8 @@ if two_bpp_mark not in ppu:
 
     macro_anchor = "#define READ_BITS(ta, tile)"
     fast_macros = T(
-        "#define DO_PIXEL_FAST(i) do { \\\\n"
-        "  pixel = (dc_pixels >> ((i) * 2)) & 3; \\\\n"
-        "  if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)\n"
-        "#define DO_PIXEL_FAST_HFLIP(i) do { \\\\n"
-        "  pixel = (dc_pixels >> ((7 - (i)) * 2)) & 3; \\\\n"
-        "  if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)\n" + macro_anchor)
+        "#define DO_PIXEL_FAST(i) do { pixel = (dc_pixels >> ((i) * 2)) & 3; if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)\n"
+        "#define DO_PIXEL_FAST_HFLIP(i) do { pixel = (dc_pixels >> ((7 - (i)) * 2)) & 3; if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)\n" + macro_anchor)
     if bg_fn.count(macro_anchor) != 1:
         sys.exit("ppu.c: 2bpp READ_BITS macro anchor not found")
     bg_fn = bg_fn.replace(macro_anchor, fast_macros, 1)
