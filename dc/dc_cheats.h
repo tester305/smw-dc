@@ -15,4 +15,5 @@ int dc_cheats_add(const char *code);
 void dc_cheats_toggle(int index);
 void dc_cheats_remove(int index);
 uint8_t dc_cheats_read(uint32_t address, uint8_t original);
+int dc_cheats_decode_code(const char *code, uint32_t *address, uint8_t *value);
 #endif
