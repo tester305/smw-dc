@@ -35,13 +35,12 @@ static dc_audio_fill_fn g_fill;
 static int16_t g_abuf[AUDIO_BUF_BYTES / 2] __attribute__((aligned(32)));
 
 /* Emulator-safe video selection.
- * Use KOS's cable-independent, progressive 320x240 NTSC mode. Unlike the
- * 640x480 NTSC/PAL modes this does not depend on interlaced video support,
- * which varies between emulator video backends. KOS line-doubles this mode
- * for a normal 480-line output where supported.
+ * Ask KOS for its generic progressive 320x240 mode. KOS selects 320x240 VGA
+ * when the cable detector reports VGA, and the CT_ANY 320x240 NTSC mode
+ * otherwise. This avoids relying on interlaced 480i support in emulators.
  */
 static int dc_display_mode(void) {
-  return DM_320x240_NTSC;
+  return DM_320x240;
 }
 
 int dc_init(void) {
