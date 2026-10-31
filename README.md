@@ -8,7 +8,7 @@ The SDL front end of upstream (`main.c`, `config.c`, `opengl.c`) is replaced by 
 
 | file | what it does |
 |---|---|
-| `dc/dc_platform.c/.h` | KOS only: video mode, PVR texture quad (sharp 2x), AICA stream audio at 32 kHz stereo, maple pads |
+| `dc/dc_platform.c/.h` | KOS only: progressive 320x240 RGB565 framebuffer output, AICA stream audio at 32 kHz stereo, maple pads |
 | `dc/dc_game.c` | game glue: asset loading, PPU/audio setup, frame loop with automatic frame skip |
 | `dc/patch_smw.py` | makes upstream safe for the SH-4 (misaligned 16/32-bit RAM accesses raise address errors there) |
 | `build.sh` / `Makefile` | fetches upstream at a pinned commit, patches it, extracts assets from your ROM, builds `smw_dc.elf` |
