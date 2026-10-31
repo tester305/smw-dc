@@ -75,6 +75,30 @@ void dc_present(const uint16_t *img) {
   }
 }
 
+/* BIOS-framebuffer menu helpers, matching the proven SMB Dreamcast front end. */
+static int dc_menu_pitch(void) {
+  return (vid_mode && vid_mode->width) ? (int)vid_mode->width : 640;
+}
+void dc_menu_init(void) {
+  bfont_set_encoding(BFONT_CODE_ISO8859_1);
+  bfont_set_foreground_color(0xFFFF);
+  bfont_set_background_color(0x0000);
+}
+void dc_menu_clear(void) { vid_clear(0, 0, 0); }
+void dc_menu_draw_str(int y, const char *str, int highlight) {
+  int pitch = dc_menu_pitch();
+  int len = (int)strlen(str);
+  int x = (pitch - len * 12) / 2;
+  if (x < 8) x = 8;
+  if (highlight && x >= 16)
+    bfont_draw_str(vram_s + y * pitch + x - 16, pitch, true, ">");
+  bfont_draw_str(vram_s + y * pitch + x, pitch, true, str);
+}
+void dc_menu_present(void) {
+  vid_waitvbl();
+  if (vid_mode && (vid_mode->flags & VID_INTERLACE)) vid_waitvbl();
+}
+
 void dc_wait_vbl(void) { vid_waitvbl(); }
 
 uint32_t dc_read_pad(int port, int *quit, int *present) {
