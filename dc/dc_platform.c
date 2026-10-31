@@ -7,7 +7,6 @@
 #include <kos/init.h>
 #include <arch/timer.h>
 #include <dc/video.h>
-#include <dc/pvr.h>
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
 #include <dc/sound/sound.h>
@@ -20,9 +19,6 @@
 
 KOS_INIT_FLAGS(INIT_DEFAULT);
 
-#define TXR_W 256
-#define TXR_H 256
-#define TXR_BYTES (TXR_W * TXR_H * 2)
 #define AUDIO_BUF_BYTES 16384
 #define STICK_DEADZONE 40
 #define TRIGGER_ON 110
@@ -30,77 +26,55 @@ KOS_INIT_FLAGS(INIT_DEFAULT);
 /* 1 = sharp 2x (512x448 centred on 640x480); 0 = stretch to the whole screen. */
 #define INTEGER_SCALE 1
 
-static pvr_ptr_t g_txr;
-static pvr_poly_hdr_t g_hdr;
-static pvr_vertex_t g_vert[4];
-static int g_pvr_on;
+static int g_fb_width;
+static int g_fb_height;
 static int g_vmu_fs_ready;
 
 static snd_stream_hnd_t g_stream = -1;
 static dc_audio_fill_fn g_fill;
 static int16_t g_abuf[AUDIO_BUF_BYTES / 2] __attribute__((aligned(32)));
 
-static void set_vertex(pvr_vertex_t *v, float x, float y, float u, float t, uint32_t flags) {
-  v->flags = flags;
-  v->x = x; v->y = y; v->z = 1.0f;
-  v->u = u; v->v = t;
-  v->argb = PVR_PACK_COLOR(1.0f, 1.0f, 1.0f, 1.0f);
-  v->oargb = 0;
-}
-
 int dc_init(void) {
-  /* VMU support is optional: boot normally when no card is inserted. */
-  g_vmu_fs_ready = (fs_vmu_init() == 0);
-  if (!g_vmu_fs_ready) fprintf(stderr, "VMU filesystem unavailable\n");
-
-  /* Reset video state (also covers coming back from the BIOS menu). */
+  /* Set up the framebuffer first; VMU support is optional. */
   int cable = vid_check_cable();
   int dm = (cable == CT_VGA) ? DM_640x480_VGA : DM_640x480_NTSC_IL;
   vid_set_mode(dm, PM_RGB565);
-  vid_empty();
-  vid_set_mode(dm, PM_RGB565);
-  vid_border_color(0, 0, 0);
   vid_clear(0, 0, 0);
 
-  if (pvr_init_defaults() != 0)
+  if (!vid_mode || !vram_s || vid_mode->width < 512 || vid_mode->height < 448)
     return -1;
-  g_pvr_on = 1;
 
-  g_txr = pvr_mem_malloc(TXR_BYTES);
-  if (!g_txr)
-    return -2;
+  g_fb_width = vid_mode->width;
+  g_fb_height = vid_mode->height;
 
-  pvr_poly_cxt_t cxt;
-  pvr_poly_cxt_txr(&cxt, PVR_LIST_OP_POLY, PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED,
-                   TXR_W, TXR_H, g_txr, INTEGER_SCALE ? PVR_FILTER_NEAREST : PVR_FILTER_BILINEAR);
-  pvr_poly_compile(&g_hdr, &cxt);
-
-  /* Only the top 224 of the 256 texture rows are used. */
-  float x0 = INTEGER_SCALE ? 64.0f : 0.0f, x1 = INTEGER_SCALE ? 576.0f : 640.0f;
-  float y0 = INTEGER_SCALE ? 16.0f : 0.0f, y1 = INTEGER_SCALE ? 464.0f : 480.0f;
-  float vmax = 224.0f / 256.0f;
-  set_vertex(&g_vert[0], x0, y0, 0.0f, 0.0f, PVR_CMD_VERTEX);
-  set_vertex(&g_vert[1], x1, y0, 1.0f, 0.0f, PVR_CMD_VERTEX);
-  set_vertex(&g_vert[2], x0, y1, 0.0f, vmax, PVR_CMD_VERTEX);
-  set_vertex(&g_vert[3], x1, y1, 1.0f, vmax, PVR_CMD_VERTEX_EOL);
+  /* VMU setup must not prevent video from being brought up. */
+  g_vmu_fs_ready = (fs_vmu_init() == 0);
+  if (!g_vmu_fs_ready) fprintf(stderr, "VMU filesystem unavailable\\n");
   return 0;
 }
 
+/*
+ * CPU framebuffer path: deliberately avoid PVR setup and texture uploads.
+ * The 256x224 game image is doubled to 512x448 and centered in 640x480.
+ * This gives us a simple, known RGB565 scanout path for boot/menu debugging.
+ */
 void dc_present(const uint16_t *img) {
-  pvr_wait_render_done();
-  /* Upload the complete 256x256 allocation. The visible image occupies the
-     first 224 rows; the remaining rows are black padding for the texture. */
-  pvr_txr_load(img, g_txr, TXR_BYTES);
-  pvr_wait_ready();
-  pvr_scene_begin();
-  pvr_list_begin(PVR_LIST_OP_POLY);
-  pvr_prim(&g_hdr, sizeof(g_hdr));
-  pvr_prim(&g_vert[0], sizeof(pvr_vertex_t));
-  pvr_prim(&g_vert[1], sizeof(pvr_vertex_t));
-  pvr_prim(&g_vert[2], sizeof(pvr_vertex_t));
-  pvr_prim(&g_vert[3], sizeof(pvr_vertex_t));
-  pvr_list_finish();
-  pvr_scene_finish();
+  uint16_t *fb = (uint16_t *)vram_s;
+  const int xoff = (g_fb_width - 512) / 2;
+  const int yoff = (g_fb_height - 448) / 2;
+
+  for (int y = 0; y < 224; ++y) {
+    const uint16_t *src = img + y * 256;
+    uint16_t *row0 = fb + (yoff + y * 2) * g_fb_width + xoff;
+    uint16_t *row1 = row0 + g_fb_width;
+    for (int x = 0; x < 256; ++x) {
+      uint16_t p = src[x];
+      row0[x * 2] = p;
+      row0[x * 2 + 1] = p;
+      row1[x * 2] = p;
+      row1[x * 2 + 1] = p;
+    }
+  }
 }
 
 void dc_wait_vbl(void) { vid_waitvbl(); }
@@ -295,11 +269,6 @@ int dc_cheats_store(const uint8_t *src, size_t len) {
 void dc_shutdown(void) {
   dc_audio_stop();
   if (g_vmu_fs_ready) { fs_vmu_shutdown(); g_vmu_fs_ready = 0; }
-  if (g_pvr_on) {
-    if (g_txr) pvr_mem_free(g_txr);
-    pvr_shutdown();
-    g_pvr_on = 0;
-  }
 }
 
 void dc_fatal(const char *msg) {
