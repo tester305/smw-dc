@@ -77,16 +77,6 @@ int dc_init(void) {
   return 0;
 }
 
-/* BIOS-font boot diagnostics, matching the prior project. */
-void dc_boot_mark(const char *message) {
-  if (!message || !vram_s || !vid_mode) return;
-  vid_clear(0, 0, 0);
-  bfont_set_encoding(BFONT_CODE_ISO8859_1);
-  bfont_set_foreground_color(0xFFFF);
-  bfont_set_background_color(0x0000);
-  bfont_draw_str(vram_s + 12 * vid_mode->width + 12, vid_mode->width, true, message);
-}
-
 /* Upload the 256x224 RGB565 frame and draw it as a PVR textured quad. */
 void dc_present(const uint16_t *img) {
   if (!img || !g_texture) return;
