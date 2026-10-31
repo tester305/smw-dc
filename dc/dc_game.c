@@ -281,17 +281,9 @@ static int RunMainMenu(int *quit) {
       else if (selection == 1) info_page = 1;
       else { RunCheatManager(quit); }
     }
-    if (info_page == 2) {
-      DrawMenuBackground(frame);
-      MenuText(48, 34, 0x07E0, "CHEAT MANAGER");
-      MenuText(22, 104, 0xFFFF, "CHEAT EDITOR IS NOT READY");
-      MenuText(22, 128, 0xFFFF, "GAME GENIE SUPPORT COMES NEXT");
-      MenuText(48, 190, 0xFFE0, "B: BACK");
-      if (pressed & DC_PAD_B) info_page = 0;
-    } else {
-      DrawMainMenu(selection, frame, info_page);
-    }
+    DrawMainMenu(selection, frame, info_page);
     dc_present(g_my_pixels);
+    dc_audio_poll();
     dc_wait_vbl();
     ++frame;
   }
