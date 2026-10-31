@@ -750,7 +750,7 @@ if two_bpp_mark not in ppu:
     # The checked-in unified diff is the source of truth for the actual C function edit.
     # Write the LUT declaration/initializer/helper first, then apply the C diff to upstream ppu.c.
     write(ppu_path, ppu)
-    diff_path = pathlib.Path(__file__).with_name("ppu_2bpp_lut.diff")
+    diff_path = pathlib.Path(__file__).resolve().with_name("ppu_2bpp_lut.diff")
     if not diff_path.is_file():
         sys.exit(f"missing 2bpp C patch: {diff_path}")
     try:
