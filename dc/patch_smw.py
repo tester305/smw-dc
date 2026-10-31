@@ -696,3 +696,105 @@ if spr_mark not in ppu:
     print("patch_smw: sprite scan early-out")
 else:
     print("patch_smw: sprite early-out already present")
+
+
+
+
+# --- 13. LUT-decode aligned 2bpp background tiles --------------------------
+# Mode-1 BG3 uses 2bpp tiles. Decode the two bitplanes once per tile row,
+# then use packed 2-bit pixels in the full-tile loop instead of repeating
+# bit extraction for each of the eight pixels. Clipped/mosaic paths stay intact.
+ppu = read(ppu_path)
+two_bpp_eol = "\r\n" if "\r\n" in ppu else "\n"
+two_bpp_mark = "/* DC-PATCH: SH-4 2bpp pixel LUT */"
+if two_bpp_mark not in ppu:
+    def T(text):
+        return text.replace("\n", two_bpp_eol)
+
+    init_end = "  dc_planar_pixel_lut_ready = true;"
+    if ppu.count(init_end) != 1:
+        sys.exit("ppu.c: 4bpp LUT init completion anchor not found")
+    ppu = ppu.replace(init_end, T(
+        "  /* DC-PATCH: initialize the two-plane lookup table too. */\n"
+        "  for (unsigned plane = 0; plane < 2; plane++) {\n"
+        "    for (unsigned value = 0; value < 256; value++) {\n"
+        "      uint16_t packed = 0;\n"
+        "      for (unsigned pixel = 0; pixel < 8; pixel++)\n"
+        "        if (value & (1u << pixel))\n"
+        "          packed |= (uint16_t)(1u << (pixel * 2 + plane));\n"
+        "      dc_planar_2bpp_lut[plane][value] = packed;\n"
+        "    }\n"
+        "  }\n" + init_end), 1)
+
+    lut_anchor = "static uint32_t dc_planar_pixel_lut[4][256];"
+    if ppu.count(lut_anchor) != 1:
+        sys.exit("ppu.c: 4bpp LUT declaration anchor not found")
+    ppu = ppu.replace(lut_anchor, lut_anchor + T(
+        "\nstatic uint16_t dc_planar_2bpp_lut[2][256];"), 1)
+
+    decode_anchor = T(
+        "static inline uint32_t dc_decode_4bpp(uint32_t planes) {\n"
+        "  return dc_planar_pixel_lut[0][planes & 0xff] |\n"
+        "         dc_planar_pixel_lut[1][(planes >> 8) & 0xff] |\n"
+        "         dc_planar_pixel_lut[2][(planes >> 16) & 0xff] |\n"
+        "         dc_planar_pixel_lut[3][planes >> 24];\n"
+        "}")
+    if ppu.count(decode_anchor) != 1:
+        sys.exit("ppu.c: 4bpp decoder anchor not found")
+    ppu = ppu.replace(decode_anchor, decode_anchor + T(
+        "\n\nstatic inline uint32_t dc_decode_2bpp(uint32_t planes) {\n"
+        "  return dc_planar_2bpp_lut[0][planes & 0xff] |\n"
+        "         dc_planar_2bpp_lut[1][(planes >> 8) & 0xff];\n"
+        "}"), 1)
+
+    bg_start = ppu.find("static void PpuDrawBackground_2bpp(Ppu *ppu, uint y, bool sub, uint layer, PpuZbufType zhi, PpuZbufType zlo) {")
+    bg_end = ppu.find("// Draw a whole line of a 4bpp background layer into bgBuffers, with mosaic applied", bg_start)
+    if bg_start < 0 or bg_end < 0:
+        sys.exit("ppu.c: 2bpp background function anchors not found")
+    bg_fn = ppu[bg_start:bg_end]
+
+    macro_anchor = "#define READ_BITS(ta, tile)"
+    fast_macros = T(
+        "#define DO_PIXEL_FAST(i) do { pixel = (dc_pixels >> ((i) * 2)) & 3; if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)\n"
+        "#define DO_PIXEL_FAST_HFLIP(i) do { pixel = (dc_pixels >> ((7 - (i)) * 2)) & 3; if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)\n" + macro_anchor)
+    if bg_fn.count(macro_anchor) != 1:
+        sys.exit("ppu.c: 2bpp READ_BITS macro anchor not found")
+    bg_fn = bg_fn.replace(macro_anchor, fast_macros, 1)
+
+    old_middle = T(
+        "      uint32 bits = READ_BITS(ta, tile & 0x3ff);\n"
+        "      if (bits) {\n"
+        "        z += ((tile & 0x1c00) >> kPaletteShift);\n"
+        "        if (tile & 0x4000) {\n"
+        "          DO_PIXEL(0); DO_PIXEL(1); DO_PIXEL(2); DO_PIXEL(3);\n"
+        "          DO_PIXEL(4); DO_PIXEL(5); DO_PIXEL(6); DO_PIXEL(7);\n"
+        "        } else {\n"
+        "          DO_PIXEL_HFLIP(0); DO_PIXEL_HFLIP(1); DO_PIXEL_HFLIP(2); DO_PIXEL_HFLIP(3);\n"
+        "          DO_PIXEL_HFLIP(4); DO_PIXEL_HFLIP(5); DO_PIXEL_HFLIP(6); DO_PIXEL_HFLIP(7);\n"
+        "        }\n"
+        "      }")
+    new_middle = T(
+        "      uint32 bits = READ_BITS(ta, tile & 0x3ff);\n"
+        "      if (bits) {\n"
+        "        uint32_t dc_pixels = dc_decode_2bpp(bits);\n"
+        "        z += ((tile & 0x1c00) >> kPaletteShift);\n"
+        "        if (tile & 0x4000) {\n"
+        "          DO_PIXEL_FAST(0); DO_PIXEL_FAST(1); DO_PIXEL_FAST(2); DO_PIXEL_FAST(3);\n"
+        "          DO_PIXEL_FAST(4); DO_PIXEL_FAST(5); DO_PIXEL_FAST(6); DO_PIXEL_FAST(7);\n"
+        "        } else {\n"
+        "          DO_PIXEL_FAST_HFLIP(0); DO_PIXEL_FAST_HFLIP(1); DO_PIXEL_FAST_HFLIP(2); DO_PIXEL_FAST_HFLIP(3);\n"
+        "          DO_PIXEL_FAST_HFLIP(4); DO_PIXEL_FAST_HFLIP(5); DO_PIXEL_FAST_HFLIP(6); DO_PIXEL_FAST_HFLIP(7);\n"
+        "        }\n"
+        "      }")
+    if bg_fn.count(old_middle) != 1:
+        sys.exit("ppu.c: 2bpp full-tile loop anchor not found or ambiguous")
+    bg_fn = bg_fn.replace(old_middle, new_middle, 1)
+    bg_fn = bg_fn.replace("#undef DO_PIXEL_HFLIP", "#undef DO_PIXEL_HFLIP" + T(
+        "\n#undef DO_PIXEL_FAST\n#undef DO_PIXEL_FAST_HFLIP"), 1)
+    ppu = ppu[:bg_start] + bg_fn + ppu[bg_end:]
+    ppu = ppu.replace("/* DC-PATCH: memoized colour math */",
+        two_bpp_mark + two_bpp_eol + "/* DC-PATCH: memoized colour math */", 1)
+    write(ppu_path, ppu)
+    print("patch_smw: enabled SH-4 2bpp background pixel LUT")
+else:
+    print("patch_smw: 2bpp planar pixel LUT already present")
