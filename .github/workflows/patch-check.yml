@@ -25,6 +25,9 @@ jobs:
           git -C smw fetch -q --depth 1 origin eae20c65c58930c8b62c76188d259579ad4130f1
           git -C smw checkout -q -f FETCH_HEAD
 
+      - name: Validate reviewable 2bpp C diff against pristine upstream
+        run: git -C smw apply --check ../dc/ppu_2bpp_lut.diff
+
       - name: Apply patch twice and verify idempotence
         run: |
           python3 dc/patch_smw.py smw
