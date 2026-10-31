@@ -160,7 +160,7 @@ static void DrawMainMenu(int selection, unsigned frame, int info_page) {
     MenuText(36, 104, 0x07E0, "VMU SAVE INFORMATION");
     MenuText(24, 132, 0xFFFF, "SRAM SAVE: /vmu/a1/SMW.SRM");
     MenuText(24, 154, 0xFFFF, "CHEATS USE A SEPARATE FILE");
-    MenuText(48, 202, 0xFFE0, "B: BACK");
+    MenuText(48, 190, 0xFFE0, "B: BACK");
   } else {
     static const char *items[] = {
       "START GAME", "VMU SAVE INFO", "CHEAT MANAGER"
@@ -171,7 +171,7 @@ static void DrawMainMenu(int selection, unsigned frame, int info_page) {
       MenuText(62, 105 + i * 25, color, items[i]);
     }
     MenuText(28, 202, 0x07E0, "DPAD: MOVE   A: SELECT");
-    MenuText(78, 218, 0xFFFF, "B: BACK");
+    MenuText(78, 190, 0xFFFF, "B: BACK");
   }
 }
 
@@ -202,7 +202,7 @@ static int RunMainMenu(int *quit) {
       MenuText(48, 34, 0x07E0, "CHEAT MANAGER");
       MenuText(22, 104, 0xFFFF, "CHEAT EDITOR IS NOT READY");
       MenuText(22, 128, 0xFFFF, "GAME GENIE SUPPORT COMES NEXT");
-      MenuText(48, 202, 0xFFE0, "B: BACK");
+      MenuText(48, 190, 0xFFE0, "B: BACK");
       if (pressed & DC_PAD_B) info_page = 0;
     } else {
       DrawMainMenu(selection, frame, info_page);
