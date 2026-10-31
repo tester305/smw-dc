@@ -1,7 +1,7 @@
 diff --git a/src/snes/ppu.c b/src/snes/ppu.c
 --- a/src/snes/ppu.c
 +++ b/src/snes/ppu.c
-@@ -303,6 +303,12 @@
+@@ -303,4 +303,10 @@
  #define DO_PIXEL_HFLIP(i) do { \
    pixel = (bits >> (7 - i)) & 1 | (bits >> (14 - i)) & 2; \
    if (pixel && z > dstz[i]) dstz[i] = z + pixel; } while (0)
@@ -29,7 +29,7 @@ diff --git a/src/snes/ppu.c b/src/snes/ppu.c
 +          DO_PIXEL_FAST_HFLIP(4); DO_PIXEL_FAST_HFLIP(5); DO_PIXEL_FAST_HFLIP(6); DO_PIXEL_FAST_HFLIP(7);
          }
        }
-@@ -395,6 +402,8 @@
+@@ -395,3 +402,5 @@
  #undef DO_PIXEL
  #undef DO_PIXEL_HFLIP
 +#undef DO_PIXEL_FAST
