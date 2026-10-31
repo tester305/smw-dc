@@ -90,23 +90,8 @@ static void LoadAssets(void) {
 enum { kAudioRate = 32000, kAudioBlock = 534 };
 static int16 g_audio_block[kAudioBlock * 2];
 static int g_audio_pos = kAudioBlock;
-static volatile int g_menu_music;
-static uint32_t g_menu_sample;
-static uint32_t g_menu_phase;
 
 static void AudioFill(int16_t *dst, int frames) {
-  if (g_menu_music) {
-    static const uint16_t notes[] = { 523, 659, 784, 659, 587, 698, 880, 698 };
-    for (int i = 0; i < frames; ++i) {
-      uint32_t note = (g_menu_sample / 4000u) & 7u;
-      g_menu_phase += ((uint32_t)notes[note] << 16) / kAudioRate;
-      int16_t sample = (g_menu_phase & 0x8000u) ? 1800 : -1800;
-      dst[i * 2] = sample;
-      dst[i * 2 + 1] = sample;
-      ++g_menu_sample;
-    }
-    return;
-  }
   while (frames > 0) {
     if (g_audio_pos >= kAudioBlock) {
       RtlRenderAudio(g_audio_block, kAudioBlock, 2);
@@ -249,7 +234,6 @@ static void RunCheatManager(int *quit) {
       MenuText(90, 198, 0xFFFF, "B BACK");
     }
     dc_present(g_my_pixels);
-    dc_audio_poll();
     dc_wait_vbl();
     ++frame;
   }
@@ -264,7 +248,6 @@ static int RunMainMenu(int *quit) {
   unsigned frame = 0;
 
   dc_menu_init();
-  g_menu_music = 1;
   DrawMainMenu(selection, frame, info_page);
 
   while (!*quit) {
@@ -287,8 +270,6 @@ static int RunMainMenu(int *quit) {
       if (pressed & DC_PAD_B) {
         if (info_page) info_page = 0;
         else {
-          g_menu_music = 0;
-          g_audio_pos = kAudioBlock;
           return 0;
         }
       }
@@ -296,8 +277,6 @@ static int RunMainMenu(int *quit) {
       if (pressed & DC_PAD_A) {
         if (info_page) info_page = 0;
         else if (selection == 0) {
-          g_menu_music = 0;
-          g_audio_pos = kAudioBlock;
           return 1;
         } else if (selection == 1) {
           info_page = 1;
@@ -310,13 +289,10 @@ static int RunMainMenu(int *quit) {
     }
 
     DrawMainMenu(selection, frame, info_page);
-    dc_audio_poll();
     dc_wait_vbl();
     ++frame;
   }
 
-  g_menu_music = 0;
-  g_audio_pos = kAudioBlock;
   return 0;
 }
 
@@ -341,8 +317,7 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  /* Start audio only after the user chooses Start, as in smb-dc. */
-  g_menu_music = 0;
+  /* No menu audio: start the game audio only after Start Game is selected. */
   if (dc_audio_start(AudioFill, kAudioRate) != 0)
     Die("AUDIO INIT FAILED");
 
