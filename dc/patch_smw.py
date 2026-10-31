@@ -799,6 +799,33 @@ else:
 
 
 
+
+# --- 15. apply decoded Game Genie replacements at LoROM cartridge reads ---
+cart_path = root / "src/snes/cart.c"
+cart = read(cart_path)
+cart_eol = "\r\n" if "\r\n" in cart else "\n"
+cart_mark = "/* DC-PATCH: Game Genie ROM read hook */"
+if cart_mark not in cart:
+    anchor = '#include "cart.h"'
+    if cart.count(anchor) != 1:
+        sys.exit("cart.c: include anchor missing for Game Genie hook")
+    cart = cart.replace(anchor, anchor + cart_eol + '#include "dc_cheats.h"', 1)
+    old = "    return cart->rom[((bank << 15) | (adr & 0x7fff)) & (cart->romSize - 1)];"
+    if cart.count(old) != 1:
+        sys.exit("cart.c: LoROM read anchor missing for Game Genie hook")
+    new = (
+        "    " + cart_mark + cart_eol +
+        "    uint32_t dc_rom_index = ((bank << 15) | (adr & 0x7fff)) & (cart->romSize - 1);" + cart_eol +
+        "    uint8_t dc_rom_value = cart->rom[dc_rom_index];" + cart_eol +
+        "    uint32_t dc_cpu_address = ((uint32_t)(bank | 0x80) << 16) | adr;" + cart_eol +
+        "    return dc_cheats_read(dc_cpu_address, dc_rom_value);"
+    )
+    cart = cart.replace(old, new, 1)
+    write(cart_path, cart)
+    print("patch_smw: Game Genie replacements hooked into LoROM reads")
+else:
+    print("patch_smw: Game Genie read hook already present")
+
 # --- 14. route cartridge SRAM through the Dreamcast VMU --------------------
 # Replace the desktop frontend's saves/*.srm file access with the VMU package
 # backend. The platform code handles package parsing and the /vmu/a1 path.
