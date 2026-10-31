@@ -155,12 +155,12 @@ static void DrawMenuBackground(unsigned frame) {
 
 static void DrawMainMenu(int selection, unsigned frame, int info_page) {
   DrawMenuBackground(frame);
-  MenuText(48, 34, 0x07E0, "SUPER MARIO WORLD");
-  MenuText(66, 58, 0xFFFF, "DREAMCAST EDITION");
+  MenuText(26, 34, 0x07E0, "SUPER MARIO WORLD");
+  MenuText(26, 58, 0xFFFF, "DREAMCAST EDITION");
   if (info_page) {
-    MenuText(36, 104, 0x07E0, "VMU SAVE INFORMATION");
-    MenuText(24, 132, 0xFFFF, "SRAM SAVE: /vmu/a1/SMW.SRM");
-    MenuText(24, 154, 0xFFFF, "CHEATS USE A SEPARATE FILE");
+    MenuText(8, 104, 0x07E0, "VMU SAVE INFORMATION");
+    MenuText(2, 132, 0xFFFF, "SRAM: /vmu/a1/SMW.SRM");
+    MenuText(20, 154, 0xFFFF, "CHEATS: SMW.CHT");
     MenuText(48, 190, 0xFFE0, "B: BACK");
   } else {
     static const char *items[] = {
@@ -171,8 +171,8 @@ static void DrawMainMenu(int selection, unsigned frame, int info_page) {
       if (i == selection) MenuText(45, 105 + i * 25, 0x07E0, ">");
       MenuText(62, 105 + i * 25, color, items[i]);
     }
-    MenuText(28, 202, 0x07E0, "DPAD: MOVE   A: SELECT");
-    MenuText(78, 190, 0xFFFF, "B: BACK");
+    MenuText(8, 174, 0x07E0, "DPAD MOVE  A SELECT");
+    MenuText(90, 198, 0xFFFF, "B BACK");
   }
 }
 
@@ -207,8 +207,9 @@ static void RunCheatManager(int *quit) {
       snprintf(shown, sizeof(shown), "%.4s-%.4s", code, code + 4);
       MenuText(50, 94, 0xFFFF, shown);
       MenuText(50 + char_pos * 12 + (char_pos >= 4 ? 12 : 0), 122, 0x07E0, "^");
-      MenuText(12, 166, 0xFFFF, "LEFT/RIGHT: HEX VALUE");
-      MenuText(12, 190, 0xFFE0, "A: NEXT  START: SAVE  B: CANCEL");
+      MenuText(2, 158, 0xFFFF, "LEFT/RIGHT: HEX");
+      MenuText(20, 182, 0xFFE0, "A NEXT  START SAVE");
+      MenuText(88, 206, 0xFFFF, "B CANCEL");
     } else {
       int count = dc_cheats_count();
       if (pressed & DC_PAD_UP && count) selected = (selected + count - 1) % count;
@@ -232,8 +233,8 @@ static void RunCheatManager(int *quit) {
         snprintf(line, sizeof(line), "%c %.4s-%.4s", ch->enabled ? '*' : '-', ch->code, ch->code + 4);
         MenuText(24, 62 + i * 24, i == selected ? 0xFFE0 : 0xFFFF, line);
       }
-      MenuText(10, 174, 0x07E0, "Y: ADD  A: TOGGLE  X: DELETE");
-      MenuText(54, 198, 0xFFFF, "B: BACK");
+      MenuText(18, 174, 0x07E0, "Y ADD A TOGGLE X DEL");
+      MenuText(90, 198, 0xFFFF, "B BACK");
     }
     dc_present(g_my_pixels);
     dc_wait_vbl();
