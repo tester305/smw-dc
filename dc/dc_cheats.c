@@ -93,7 +93,7 @@ void dc_cheats_remove(int i) {
 }
 uint8_t dc_cheats_read(uint32_t address, uint8_t original) {
   for (int i = 0; i < g_count; ++i)
-    if (g_cheats[i].enabled && g_cheats[i].address == address)
+    if (g_cheats[i].enabled && (g_cheats[i].address & 0x7fffffu) == (address & 0x7fffffu))
       return g_cheats[i].value;
   return original;
 }
