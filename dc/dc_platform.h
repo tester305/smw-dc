@@ -21,6 +21,10 @@ typedef void (*dc_audio_fill_fn)(int16_t *dst_interleaved_stereo, int frames);
 int  dc_init(void);
 void dc_present(const uint16_t *rgb565_256x256);     /* scale and present a 256x224 RGB565 image */
 void dc_wait_vbl(void);
+void dc_menu_init(void);
+void dc_menu_clear(void);
+void dc_menu_draw_str(int y, const char *text, int highlight);
+void dc_menu_present(void);
 uint32_t dc_read_pad(int port, int *quit, int *present); /* SNES-layout bits; *quit set on A+B+X+Y+Start */
 int dc_perf_toggle_pressed(int port);
 int  dc_audio_start(dc_audio_fill_fn fn, int rate);  /* stereo, 16-bit; 0 = ok */
