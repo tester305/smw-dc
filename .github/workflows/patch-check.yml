@@ -3,7 +3,7 @@ name: Check Dreamcast source patch
 on:
   pull_request:
     paths:
-      - "dc/patch_smw.py"
+      - "dc/patch_smw.py"\n      - "dc/ppu_2bpp_lut.diff"
       - ".github/workflows/patch-check.yml"
   workflow_dispatch:
 
