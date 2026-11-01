@@ -89,9 +89,18 @@ void dc_present(const uint16_t *img) {
   }
 }
 
-/* BIOS-framebuffer menu helpers, matching the proven SMB Dreamcast front end. */
+/* BIOS-framebuffer menu helpers (same call sequence as the proven SMB Dreamcast front end).
+ *
+ * The BIOS ROM font is a fixed 12x24 cell, which is only 26 columns on the 320x240 display.
+ * Each glyph is therefore drawn by bfont_draw() into a scratch cell and area-averaged down to
+ * MENU_GLYPH_W x MENU_GLYPH_H (8x16 = 40 columns x 15 rows) while it is copied to the screen.
+ * Change the two sizes below to resize the menu text. */
+#define MENU_GLYPH_W 8
+#define MENU_GLYPH_H 16
+#define MENU_SUBSAMPLES 4   /* MENU_SUBSAMPLES^2 samples per output pixel */
+
 static int dc_menu_pitch(void) {
-  return (vid_mode && vid_mode->width) ? (int)vid_mode->width : 640;
+  return (vid_mode && vid_mode->width) ? (int)vid_mode->width : 320;
 }
 void dc_menu_init(void) {
   bfont_set_encoding(BFONT_CODE_ISO8859_1);
@@ -99,14 +108,42 @@ void dc_menu_init(void) {
   bfont_set_background_color(0x0000);
 }
 void dc_menu_clear(void) { vid_clear(0, 0, 0); }
+
+static void dc_menu_glyph(uint16_t *dst, int pitch, unsigned char ch) {
+  static uint16_t cell[BFONT_THIN_WIDTH * BFONT_HEIGHT];
+  memset(cell, 0, sizeof(cell));
+  bfont_draw(cell, BFONT_THIN_WIDTH, true, ch);          /* 12x24, lit pixel = foreground */
+  for (int ty = 0; ty < MENU_GLYPH_H; ++ty) {
+    for (int tx = 0; tx < MENU_GLYPH_W; ++tx) {
+      int lit = 0;
+      for (int j = 0; j < MENU_SUBSAMPLES; ++j) {
+        int sy = ((ty * MENU_SUBSAMPLES + j) * BFONT_HEIGHT) / (MENU_GLYPH_H * MENU_SUBSAMPLES);
+        for (int i = 0; i < MENU_SUBSAMPLES; ++i) {
+          int sx = ((tx * MENU_SUBSAMPLES + i) * BFONT_THIN_WIDTH) / (MENU_GLYPH_W * MENU_SUBSAMPLES);
+          if (cell[sy * BFONT_THIN_WIDTH + sx]) ++lit;
+        }
+      }
+      unsigned v = (unsigned)lit * 255u / (MENU_SUBSAMPLES * MENU_SUBSAMPLES);
+      dst[ty * pitch + tx] = (uint16_t)(((v >> 3) << 11) | ((v >> 2) << 5) | (v >> 3));
+    }
+  }
+}
+
 void dc_menu_draw_str(int y, const char *str, int highlight) {
-  int pitch = dc_menu_pitch();
+  const int pitch = dc_menu_pitch();
+  const int height = (vid_mode && vid_mode->height) ? (int)vid_mode->height : 240;
   int len = (int)strlen(str);
-  int x = (pitch - len * 12) / 2;
-  if (x < 8) x = 8;
-  if (highlight && x >= 16)
-    bfont_draw_str(vram_s + y * pitch + x - 16, pitch, true, ">");
-  bfont_draw_str(vram_s + y * pitch + x, pitch, true, str);
+  const int max_len = (pitch - 2 * MENU_GLYPH_W) / MENU_GLYPH_W;   /* keep an 8 px margin */
+  if (len > max_len) len = max_len;
+  if (y < 0 || y + MENU_GLYPH_H > height) return;
+
+  int x = (pitch - len * MENU_GLYPH_W) / 2;
+  if (x < MENU_GLYPH_W) x = MENU_GLYPH_W;
+  uint16_t *row = (uint16_t *)vram_s + y * pitch;
+  if (highlight && x >= 2 * MENU_GLYPH_W)
+    dc_menu_glyph(row + x - 2 * MENU_GLYPH_W, pitch, '>');
+  for (int i = 0; i < len; ++i)
+    dc_menu_glyph(row + x + i * MENU_GLYPH_W, pitch, (unsigned char)str[i]);
 }
 void dc_menu_present(void) {
   /* Single framebuffer: the text is already on screen, just pace to the beam. */
