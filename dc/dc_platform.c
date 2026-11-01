@@ -54,8 +54,14 @@ int dc_init(void) {
   if (!vid_mode || !vram_s || vid_mode->width < 256 || vid_mode->height < 224)
     return -1;
 
-  g_vmu_fs_ready = (fs_vmu_init() == 0);
-  if (!g_vmu_fs_ready) fprintf(stderr, "VMU filesystem unavailable\n");
+  /* KallistiOS already mounts the VMU filesystem during kernel init
+     (vmu_fs_init is a default-on weak init flag). Calling fs_vmu_init() here
+     a second time re-inserts fs_vmu's static nmmgr_handler_t into the kernel
+     name-handler list, so the list node points at itself and nmmgr_lookup()
+     spins forever on the first fopen("/vmu/...") — dc_cheats_init() does that
+     before the menu is drawn, which is the black screen. smb-dc never calls
+     fs_vmu_init() itself, which is why its menu works. */
+  g_vmu_fs_ready = 1;
   return 0;
 }
 
@@ -316,7 +322,10 @@ int dc_cheats_store(const uint8_t *src, size_t len) {
 
 void dc_shutdown(void) {
   dc_audio_stop();
-  if (g_vmu_fs_ready) { fs_vmu_shutdown(); g_vmu_fs_ready = 0; }
+  /* Do NOT call fs_vmu_shutdown() here: KOS shuts the VMU filesystem down
+     itself after main() returns (arch_auto_shutdown). Shutting it down twice
+     would mirror the double-init problem. */
+  g_vmu_fs_ready = 0;
 }
 
 void dc_fatal(const char *msg) {
