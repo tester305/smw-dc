@@ -91,7 +91,13 @@ enum { kAudioRate = 32000, kAudioBlock = 534 };
 static int16 g_audio_block[kAudioBlock * 2];
 static int g_audio_pos = kAudioBlock;
 
+static int g_audio_ready;   /* set once SnesInit() and the SPC player exist */
+
 static void AudioFill(int16_t *dst, int frames) {
+  if (!g_audio_ready) {       /* KOS prefills the stream inside snd_stream_start() */
+    memset(dst, 0, (size_t)frames * 4);
+    return;
+  }
   while (frames > 0) {
     if (g_audio_pos >= kAudioBlock) {
       RtlRenderAudio(g_audio_block, kAudioBlock, 2);
@@ -129,6 +135,14 @@ static void DrawNumber(int x, int y, int value, uint16_t color) {
 }
 
 /* ---- lightweight Dreamcast front-end menu ---- */
+
+/* The menu text names the physical Dreamcast buttons, but dc_read_pad() returns SNES-layout
+   bits (DC A -> DC_PAD_B, DC B -> DC_PAD_A, DC X -> DC_PAD_Y, DC Y -> DC_PAD_X).  Use these
+   aliases in every menu so "A" really is the Dreamcast A button. */
+#define MENU_BTN_A DC_PAD_B
+#define MENU_BTN_B DC_PAD_A
+#define MENU_BTN_X DC_PAD_Y
+#define MENU_BTN_Y DC_PAD_X
 static void MenuText(int x, int y, uint16_t color, const char *text) {
   bfont_draw_str_ex(&g_my_pixels[y * 256 + x], 256, color, 0x0000, 16, true, text);
 }
@@ -152,26 +166,25 @@ static void DrawMenuBackground(unsigned frame) {
   }
 }
 
-/* Main menu graphics: BIOS-font helpers on the framebuffer, laid out for the
-   progressive 320x240 display (24 px BIOS font = ten 24 px rows per screen;
-   keep strings under ~26 characters so they fit 320 px). */
+/* Main menu graphics: BIOS-font helpers on the framebuffer, drawn at 8x16 per character
+   (40 columns x 15 rows on the progressive 320x240 display; see dc_platform.c). */
 static const char *const kMainMenuLabels[3] = { "Start Game", "VMU Save Info", "Cheat Manager" };
 
 static void DrawMainMenu(int selection, int info_page) {
   dc_menu_init();
   dc_menu_clear();
   if (info_page) {
-    dc_menu_draw_str(32, "VMU Save Information", 0);
+    dc_menu_draw_str(40, "VMU Save Information", 0);
     dc_menu_draw_str(88, "SRAM: /vmu/a1/SMW.SRM", 0);
-    dc_menu_draw_str(120, "Cheats: SMW.CHT", 0);
-    dc_menu_draw_str(200, "A / Start / B = Back", 0);
+    dc_menu_draw_str(112, "Cheats: SMW.CHT", 0);
+    dc_menu_draw_str(184, "A / Start / B = Back", 0);
   } else {
-    dc_menu_draw_str(24, "SMW for Dreamcast", 0);
-    dc_menu_draw_str(64, "A / Start = Select", 0);
-    dc_menu_draw_str(112, kMainMenuLabels[0], selection == 0);
-    dc_menu_draw_str(148, kMainMenuLabels[1], selection == 1);
-    dc_menu_draw_str(184, kMainMenuLabels[2], selection == 2);
-    dc_menu_draw_str(212, "B = Quit", 0);
+    dc_menu_draw_str(32, "SMW for Dreamcast", 0);
+    dc_menu_draw_str(56, "A / Start = Select", 0);
+    dc_menu_draw_str(104, kMainMenuLabels[0], selection == 0);
+    dc_menu_draw_str(128, kMainMenuLabels[1], selection == 1);
+    dc_menu_draw_str(152, kMainMenuLabels[2], selection == 2);
+    dc_menu_draw_str(192, "B = Quit", 0);
   }
   dc_menu_present();
 }
@@ -190,14 +203,14 @@ static void RunCheatManager(int *quit) {
     if (editing) {
       if (pressed & DC_PAD_LEFT) code[char_pos] = hex[(strchr(hex, code[char_pos]) - hex + 15) & 15];
       if (pressed & DC_PAD_RIGHT) code[char_pos] = hex[(strchr(hex, code[char_pos]) - hex + 1) & 15];
-      if (pressed & DC_PAD_A) {
+      if (pressed & MENU_BTN_A) {
         if (char_pos < 7) ++char_pos;
         else {
           int result = dc_cheats_add(code);
           if (result == 0) editing = 0;
         }
       }
-      if (pressed & DC_PAD_B) editing = 0;
+      if (pressed & MENU_BTN_B) editing = 0;
       if (pressed & DC_PAD_START) {
         if (dc_cheats_add(code) == 0) editing = 0;
       }
@@ -214,13 +227,13 @@ static void RunCheatManager(int *quit) {
       int count = dc_cheats_count();
       if (pressed & DC_PAD_UP && count) selected = (selected + count - 1) % count;
       if (pressed & DC_PAD_DOWN && count) selected = (selected + 1) % count;
-      if (pressed & DC_PAD_B) return;
-      if (pressed & DC_PAD_Y && count < DC_CHEAT_MAX) {
+      if (pressed & MENU_BTN_B) return;
+      if (pressed & MENU_BTN_Y && count < DC_CHEAT_MAX) {
         memset(code, '0', 8); code[8] = 0;
         char_pos = 0; editing = 1;
       }
-      if (pressed & DC_PAD_A && count) dc_cheats_toggle(selected);
-      if (pressed & DC_PAD_X && count) {
+      if (pressed & MENU_BTN_A && count) dc_cheats_toggle(selected);
+      if (pressed & MENU_BTN_X && count) {
         dc_cheats_remove(selected);
         if (selected >= dc_cheats_count() && selected > 0) --selected;
       }
@@ -271,7 +284,7 @@ static int RunMainMenu(int *quit) {
         dirty = 1;
       }
 
-      if (pressed & DC_PAD_B) {
+      if (pressed & MENU_BTN_B) {
         if (info_page) {
           info_page = 0;
           dirty = 1;
@@ -280,7 +293,7 @@ static int RunMainMenu(int *quit) {
         }
       }
 
-      if (pressed & DC_PAD_A) {
+      if (pressed & (MENU_BTN_A | DC_PAD_START)) {
         if (info_page) info_page = 0;
         else if (selection == 0) {
           return 1;
@@ -327,9 +340,11 @@ int main(int argc, char **argv) {
     return 0;
   }
 
-  /* No menu audio: start the game audio only after Start Game is selected. */
-  if (dc_audio_start(AudioFill, kAudioRate) != 0)
-    Die("AUDIO INIT FAILED");
+  /* The menu text covers more of the screen than the game picture does: blank it, then say
+     what is happening while the assets load from the romdisk. */
+  dc_menu_init();
+  dc_menu_clear();
+  dc_menu_draw_str(112, "Loading...", 0);
 
   LoadAssets();
 
@@ -344,6 +359,14 @@ int main(int argc, char **argv) {
   PpuBeginDrawing(g_my_ppu, (uint8_t *)g_my_pixels, 256 * sizeof(g_my_pixels[0]), 0);
 
   RtlReadSram();
+
+  /* Start audio only now: KOS prefills the stream inside snd_stream_start(), which calls
+     AudioFill() -> RtlRenderAudio(), and that needs SnesInit() and the SPC player to exist.
+     (Starting it before them dereferenced NULL: the SH-4 exception after "Start Game".) */
+  g_audio_ready = 1;
+  if (dc_audio_start(AudioFill, kAudioRate) != 0)
+    Die("AUDIO INIT FAILED");
+  dc_menu_clear();
 
   const uint64_t kFrameUs = 16667;
   int show_perf = 0, skip_now = 0;
