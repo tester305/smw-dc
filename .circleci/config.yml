@@ -1,0 +1,103 @@
+version: 2.1
+
+jobs:
+  build:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    working_directory: ~/project
+    steps:
+      - checkout
+
+      - run:
+          name: Install build dependencies
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y build-essential texinfo libjpeg-dev libpng-dev libelf-dev \
+              git subversion python3 wget curl gettext bison flex libgmp-dev libmpfr-dev libmpc-dev \
+              meson ninja-build pkg-config libisofs-dev gnupg
+
+      - restore_cache:
+          keys:
+            - kos-sh-elf-ubuntu2404-v1
+
+      - run:
+          name: Build SH-4 toolchain if cache is missing
+          command: |
+            if [ ! -x /opt/toolchains/dc/sh-elf/bin/sh-elf-gcc ]; then
+              sudo mkdir -p /opt/toolchains/dc
+              sudo chown -R "$USER":"$USER" /opt/toolchains
+              git clone --depth 1 https://github.com/KallistiOS/KallistiOS.git /opt/toolchains/dc/kos
+              cp /opt/toolchains/dc/kos/doc/environ.sh.sample /opt/toolchains/dc/kos/environ.sh
+              cd /opt/toolchains/dc/kos/utils/kos-chain
+              cp Makefile.dreamcast.cfg Makefile.cfg
+              sed -i "s/^makejobs=.*/makejobs=$(nproc)/" Makefile.cfg
+              make
+            fi
+
+      - save_cache:
+          key: kos-sh-elf-ubuntu2404-v1
+          paths:
+            - /opt/toolchains/dc/sh-elf
+
+      - run:
+          name: Build KallistiOS
+          command: |
+            if [ ! -f /opt/toolchains/dc/kos/environ.sh ]; then
+              sudo mkdir -p /opt/toolchains/dc
+              sudo chown -R "$USER":"$USER" /opt/toolchains
+              git clone --depth 1 https://github.com/KallistiOS/KallistiOS.git /opt/toolchains/dc/kos
+              cp /opt/toolchains/dc/kos/doc/environ.sh.sample /opt/toolchains/dc/kos/environ.sh
+            fi
+            . /opt/toolchains/dc/kos/environ.sh
+            cd "$KOS_BASE"
+            make -j"$(nproc)"
+
+      - run:
+          name: Decrypt ROM and build
+          command: |
+            if [ -f smw.sfc.gpg ] && [ -n "${SMW_ROM_PASSPHRASE:-}" ]; then
+              gpg --batch --yes --pinentry-mode loopback --passphrase "$SMW_ROM_PASSPHRASE" -o smw.sfc -d smw.sfc.gpg
+            elif [ -f smw.sfc ]; then
+              echo "Using supplied smw.sfc"
+            else
+              echo "ERROR: Add your encrypted smw.sfc.gpg file and set SMW_ROM_PASSPHRASE in CircleCI project environment variables."
+              exit 1
+            fi
+            . /opt/toolchains/dc/kos/environ.sh
+            ./build.sh smw.sfc
+            rm -f smw.sfc
+            test -s smw_dc.elf
+
+      - run:
+          name: Build mkdcdisc
+          command: |
+            git clone --depth 1 https://gitlab.com/simulant/mkdcdisc.git "$HOME/mkdcdisc"
+            cd "$HOME/mkdcdisc"
+            meson setup builddir
+            meson compile -C builddir
+            test -x builddir/mkdcdisc
+
+      - run:
+          name: Create CDI images
+          command: |
+            "$HOME/mkdcdisc/builddir/mkdcdisc" -e smw_dc.elf -o smw_dc_burn_ready.cdi -n "SMW"
+            "$HOME/mkdcdisc/builddir/mkdcdisc" -N -e smw_dc.elf -o smw_dc.cdi -n "SMW"
+            test -s smw_dc_burn_ready.cdi
+            test -s smw_dc.cdi
+            ls -lh smw_dc.elf smw_dc_burn_ready.cdi smw_dc.cdi
+
+      - store_artifacts:
+          path: smw_dc.elf
+          destination: smw_dc.elf
+      - store_artifacts:
+          path: smw_dc_burn_ready.cdi
+          destination: smw_dc_burn_ready.cdi
+      - store_artifacts:
+          path: smw_dc.cdi
+          destination: smw_dc.cdi
+
+workflows:
+  build_on_push:
+    jobs:
+      - build
