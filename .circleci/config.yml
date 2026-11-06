@@ -54,6 +54,17 @@ jobs:
             make -j"$(nproc)"
 
       - run:
+          name: Download encrypted ROM from private repository
+          command: |
+            : "${GH_ROM_READ_TOKEN:?Set GH_ROM_READ_TOKEN in CircleCI project environment variables}"
+            curl --fail --silent --show-error --location \
+              -H "Authorization: Bearer ${GH_ROM_READ_TOKEN}" \
+              -H "Accept: application/vnd.github.raw" \
+              "https://api.github.com/repos/tester305/smw-dc-rom/contents/smw.sfc.gpg?ref=main" \
+              -o smw.sfc.gpg
+            test -s smw.sfc.gpg
+
+      - run:
           name: Decrypt ROM and build
           command: |
             if [ -f smw.sfc.gpg ] && [ -n "${SMW_ROM_PASSPHRASE:-}" ]; then
