@@ -58,7 +58,7 @@ jobs:
           command: |
             : "${SMW_ROM_DEPLOY_KEY:?Set SMW_ROM_DEPLOY_KEY in CircleCI project environment variables}"
             install -d -m 700 ~/.ssh
-            printf '%s\n' "$SMW_ROM_DEPLOY_KEY" > ~/.ssh/id_ed25519
+            printf '%b\n' "$SMW_ROM_DEPLOY_KEY" > ~/.ssh/id_ed25519
             chmod 600 ~/.ssh/id_ed25519
             ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
             chmod 600 ~/.ssh/known_hosts
