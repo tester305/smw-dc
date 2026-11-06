@@ -18,14 +18,25 @@ jobs:
               meson ninja-build pkg-config libisofs-dev gnupg
 
       - run:
-          name: Prepare toolchain cache directory
+          name: Prepare workspace cache directory
           command: |
-            sudo mkdir -p /opt/toolchains/dc
-            sudo chown -R "$USER":"$USER" /opt/toolchains
+            mkdir -p .circleci-cache
 
       - restore_cache:
           keys:
-            - kos-sh-elf-ubuntu2404-v2
+            - kos-sh-elf-ubuntu2404-v3
+
+      - run:
+          name: Restore SH-4 toolchain from workspace cache
+          command: |
+            if [ -x .circleci-cache/sh-elf/bin/sh-elf-gcc ]; then
+              sudo mkdir -p /opt/toolchains/dc
+              sudo cp -a .circleci-cache/sh-elf /opt/toolchains/dc/sh-elf
+              sudo chown -R "$USER":"$USER" /opt/toolchains/dc/sh-elf
+              echo "Restored cached SH-4 compiler."
+            else
+              echo "No cached SH-4 compiler found."
+            fi
 
       - run:
           name: Build SH-4 toolchain if cache is missing
@@ -39,12 +50,21 @@ jobs:
               cp Makefile.dreamcast.cfg Makefile.cfg
               sed -i "s/^makejobs=.*/makejobs=$(nproc)/" Makefile.cfg
               make
+            else
+              echo "Using cached SH-4 toolchain."
             fi
 
+      - run:
+          name: Stage SH-4 toolchain for CircleCI cache
+          command: |
+            mkdir -p .circleci-cache
+            rm -rf .circleci-cache/sh-elf
+            cp -a /opt/toolchains/dc/sh-elf .circleci-cache/sh-elf
+
       - save_cache:
-          key: kos-sh-elf-ubuntu2404-v2
+          key: kos-sh-elf-ubuntu2404-v3
           paths:
-            - /opt/toolchains/dc/sh-elf
+            - .circleci-cache/sh-elf
 
       - run:
           name: Build KallistiOS
