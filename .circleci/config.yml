@@ -86,8 +86,23 @@ jobs:
             install -d -m 700 ~/.ssh
             printf '%s' "$SMW_ROM_DEPLOY_KEY" | sed 's/\\n/\n/g' | tr -d '\r' > ~/.ssh/id_ed25519
             chmod 600 ~/.ssh/id_ed25519
-            if ! ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub; then
-              echo "ERROR: SMW_ROM_DEPLOY_KEY is not a valid private key. Set the full unencrypted OpenSSH private key, including BEGIN/END lines, in CircleCI."
+            KEY_LINES=$(wc -l < ~/.ssh/id_ed25519)
+            KEY_FIRST=$(head -1 ~/.ssh/id_ed25519)
+            KEY_LAST=$(tail -1 ~/.ssh/id_ed25519)
+            if ! ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub 2>&1; then
+              echo "ERROR: SMW_ROM_DEPLOY_KEY is not a valid SSH private key."
+              echo "  Key file has ${KEY_LINES} lines (a typical ed25519 key has ~8 lines)."
+              echo "  First line: '${KEY_FIRST}'"
+              echo "  Last line:  '${KEY_LAST}'"
+              echo ""
+              echo "Common causes:"
+              echo "  - Key was pasted without the BEGIN/END header lines"
+              echo "  - Key has extra spaces, quotes, or encoding artifacts"
+              echo "  - Key is RSA or another format (must be unencrypted OpenSSH format)"
+              echo "  - SMW_ROM_DEPLOY_KEY was set to a base64-encoded value instead of the raw key"
+              echo ""
+              echo "To fix: in CircleCI project settings, set SMW_ROM_DEPLOY_KEY to the raw"
+              echo "contents of your id_ed25519 file, including the BEGIN/END lines."
               exit 1
             fi
             ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
