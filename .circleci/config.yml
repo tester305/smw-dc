@@ -15,31 +15,69 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y build-essential texinfo libjpeg-dev libpng-dev libelf-dev \
               git subversion python3 wget curl gettext bison flex libgmp-dev libmpfr-dev libmpc-dev \
-              meson ninja-build pkg-config libisofs-dev gnupg
+              meson ninja-build pkg-config libisofs-dev gnupg zstd
 
       - run:
           name: Prepare workspace cache directory
           command: |
             mkdir -p .circleci-cache
 
+      # 1) CircleCI's own cache (bump v4 -> v5 to force a fresh pull from GitHub)
       - restore_cache:
           keys:
-            - kos-sh-elf-ubuntu2404-v3
+            - kos-sh-elf-ubuntu2404-v4
 
       - run:
-          name: Restore SH-4 toolchain from workspace cache
+          name: Restore SH-4 toolchain from CircleCI cache
           command: |
             if [ -x .circleci-cache/sh-elf/bin/sh-elf-gcc ]; then
               sudo mkdir -p /opt/toolchains/dc
+              sudo rm -rf /opt/toolchains/dc/sh-elf
               sudo cp -a .circleci-cache/sh-elf /opt/toolchains/dc/sh-elf
               sudo chown -R "$USER":"$USER" /opt/toolchains/dc/sh-elf
-              echo "Restored cached SH-4 compiler."
+              echo "Restored SH-4 compiler from CircleCI cache."
             else
-              echo "No cached SH-4 compiler found."
+              echo "No CircleCI-cached SH-4 compiler."
             fi
 
+      # 2) Cache miss -> grab the toolchain GitHub Actions already built.
+      #    Uses the same SSH key CircleCI used for `checkout`, so no token needed.
       - run:
-          name: Build SH-4 toolchain if cache is missing
+          name: Fetch SH-4 toolchain from GitHub (over SSH)
+          command: |
+            if [ -x /opt/toolchains/dc/sh-elf/bin/sh-elf-gcc ]; then
+              echo "Toolchain already present, skipping GitHub fetch."
+              exit 0
+            fi
+
+            cat > /tmp/fetch-toolchain.sh <<'EOF'
+            set -euo pipefail
+            BRANCH="${TOOLCHAIN_BRANCH:-toolchain-cache}"
+            REMOTE="$(git -C "$HOME/project" remote get-url origin)"
+            TMP="$(mktemp -d)"
+
+            echo "Cloning branch '$BRANCH' from $REMOTE ..."
+            git clone --quiet --depth 1 --branch "$BRANCH" "$REMOTE" "$TMP/repo"
+            cd "$TMP/repo"
+            sha256sum -c SHA256SUMS
+
+            sudo mkdir -p /opt/toolchains/dc
+            sudo chown -R "$USER":"$USER" /opt/toolchains
+            rm -rf /opt/toolchains/dc/sh-elf
+            cat sh-elf.tar.zst.part-* | zstd -dc | tar -xf - -C /opt/toolchains/dc
+
+            /opt/toolchains/dc/sh-elf/bin/sh-elf-gcc --version > /dev/null
+            echo "SH-4 toolchain fetched from GitHub."
+            EOF
+
+            if ! bash /tmp/fetch-toolchain.sh; then
+              echo "GitHub fetch failed, falling back to building from source."
+              rm -rf /opt/toolchains/dc/sh-elf
+            fi
+
+      # 3) Still nothing -> build from source (slow path, last resort)
+      - run:
+          name: Build SH-4 toolchain if still missing
           command: |
             if [ ! -x /opt/toolchains/dc/sh-elf/bin/sh-elf-gcc ]; then
               sudo mkdir -p /opt/toolchains/dc
@@ -51,18 +89,22 @@ jobs:
               sed -i "s/^makejobs=.*/makejobs=$(nproc)/" Makefile.cfg
               make
             else
-              echo "Using cached SH-4 toolchain."
+              echo "Using existing SH-4 toolchain."
             fi
 
       - run:
           name: Stage SH-4 toolchain for CircleCI cache
           command: |
-            mkdir -p .circleci-cache
-            rm -rf .circleci-cache/sh-elf
-            cp -a /opt/toolchains/dc/sh-elf .circleci-cache/sh-elf
+            if [ -x .circleci-cache/sh-elf/bin/sh-elf-gcc ]; then
+              echo "Already in CircleCI cache, nothing to stage."
+            else
+              mkdir -p .circleci-cache
+              rm -rf .circleci-cache/sh-elf
+              cp -a /opt/toolchains/dc/sh-elf .circleci-cache/sh-elf
+            fi
 
       - save_cache:
-          key: kos-sh-elf-ubuntu2404-v3
+          key: kos-sh-elf-ubuntu2404-v4
           paths:
             - .circleci-cache/sh-elf
 
@@ -79,39 +121,45 @@ jobs:
             cd "$KOS_BASE"
             make -j"$(nproc)"
 
+      # ROM repo access without any environment variable:
+      # CircleCI > Project Settings > SSH Keys > Additional SSH Keys (hostname: github.com)
+      - add_ssh_keys
+
       - run:
-          name: Download encrypted ROM using read-only SSH deploy key
+          name: Download ROM from private repo using the CircleCI SSH key
           command: |
-            : "${SMW_ROM_DEPLOY_KEY:?Set SMW_ROM_DEPLOY_KEY in CircleCI project environment variables}"
-            install -d -m 700 ~/.ssh
-            printf '%s' "$SMW_ROM_DEPLOY_KEY" | sed 's/\\n/\n/g' | tr -d '\r' > ~/.ssh/id_ed25519
-            chmod 600 ~/.ssh/id_ed25519
-            KEY_LINES=$(wc -l < ~/.ssh/id_ed25519)
-            KEY_FIRST=$(head -1 ~/.ssh/id_ed25519)
-            KEY_LAST=$(tail -1 ~/.ssh/id_ed25519)
-            if ! ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub 2>&1; then
-              echo "ERROR: SMW_ROM_DEPLOY_KEY is not a valid SSH private key."
-              echo "  Key file has ${KEY_LINES} lines (a typical ed25519 key has ~8 lines)."
-              echo "  First line: '${KEY_FIRST}'"
-              echo "  Last line:  '${KEY_LAST}'"
-              echo ""
-              echo "Common causes:"
-              echo "  - Key was pasted without the BEGIN/END header lines"
-              echo "  - Key has extra spaces, quotes, or encoding artifacts"
-              echo "  - Key is RSA or another format (must be unencrypted OpenSSH format)"
-              echo "  - SMW_ROM_DEPLOY_KEY was set to a base64-encoded value instead of the raw key"
-              echo ""
-              echo "To fix: in CircleCI project settings, set SMW_ROM_DEPLOY_KEY to the raw"
-              echo "contents of your id_ed25519 file, including the BEGIN/END lines."
+            ROM_REPO="git@github.com:tester305/smw-dc-rom.git"
+            ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+            # CircleCI names the added key files itself, so try each key until one can read the ROM repo.
+            KEY=""
+            for k in "$HOME"/.ssh/id_*; do
+              case "$k" in *.pub) continue ;; esac
+              [ -f "$k" ] || continue
+              if GIT_SSH_COMMAND="ssh -i $k -o IdentitiesOnly=yes" \
+                  git ls-remote --exit-code "$ROM_REPO" refs/heads/main > /dev/null 2>&1; then
+                KEY="$k"
+                break
+              fi
+            done
+            if [ -z "$KEY" ]; then
+              echo "ERROR: no SSH key in this job can read $ROM_REPO."
+              echo "Add its deploy key under Project Settings > SSH Keys (hostname github.com)."
               exit 1
             fi
-            ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
-            chmod 600 ~/.ssh/known_hosts
-            GIT_SSH_COMMAND="ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes" \
-              git clone --depth 1 --branch main \
-              git@github.com:tester305/smw-dc-rom.git "$HOME/smw-dc-rom"
-            cp "$HOME/smw-dc-rom/smw.sfc.gpg" ./smw.sfc.gpg
-            test -s smw.sfc.gpg
+            echo "Using key file $(basename "$KEY")"
+
+            GIT_SSH_COMMAND="ssh -i $KEY -o IdentitiesOnly=yes" \
+              git clone --depth 1 --branch main "$ROM_REPO" "$HOME/smw-dc-rom"
+
+            # Plain smw.sfc (private repo) or encrypted smw.sfc.gpg, whichever is there
+            if [ -f "$HOME/smw-dc-rom/smw.sfc" ]; then
+              cp "$HOME/smw-dc-rom/smw.sfc" ./smw.sfc
+              test -s smw.sfc
+            else
+              cp "$HOME/smw-dc-rom/smw.sfc.gpg" ./smw.sfc.gpg
+              test -s smw.sfc.gpg
+            fi
 
       - run:
           name: Decrypt ROM and build
