@@ -50,7 +50,7 @@ jobs:
               exit 0
             fi
 
-            cat > /tmp/fetch-toolchain.sh <<'EOF'
+            cat > /tmp/fetch-toolchain.sh \<<'EOF'
             set -euo pipefail
             BRANCH="${TOOLCHAIN_BRANCH:-toolchain-cache}"
             REMOTE="$(git -C "$HOME/project" remote get-url origin)"
