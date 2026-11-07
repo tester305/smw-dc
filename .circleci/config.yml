@@ -87,10 +87,10 @@ jobs:
             python3 - <<'PY'
             import os
             key = os.environ["SMW_ROM_DEPLOY_KEY"]
-            key = key.replace("\\r", "").replace("\\n", "\n").strip()
+            key = key.replace("\r", "").replace("\\n", "\n").strip()
             if len(key) >= 2 and key[0] == key[-1] and key[0] in "\\\"'":
                 key = key[1:-1].strip()
-            with open(os.path.expanduser("~/.ssh/id_ed25519"), "w", encoding="ascii", newline="\\n") as f:
+            with open(os.path.expanduser("~/.ssh/id_ed25519"), "w", encoding="ascii", newline="\n") as f:
                 f.write(key + "\n")
             PY
             chmod 600 ~/.ssh/id_ed25519
