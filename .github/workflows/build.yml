@@ -1,22 +1,21 @@
-name: Build Dreamcast ELF
+name: Build Dreamcast ELF (Sengi Basic)
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ main, master, "experiment/pvr2-native-ppu" ]
   workflow_dispatch:
     inputs:
       republish_toolchain:
-        description: "Re-publish the SH-4 toolchain to the toolchain-cache branch (for CircleCI)"
+        description: "Re-publish the SH-4 toolchain to the toolchain-cache branch"
         type: boolean
         default: false
 
-# contents: write lets the built-in GITHUB_TOKEN push the toolchain-cache branch
 permissions:
   contents: write
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: sengi-basic-2-ubuntu-2404
     timeout-minutes: 180
 
     steps:
@@ -59,8 +58,6 @@ jobs:
           path: /opt/toolchains/dc/sh-elf
           key: kos-sh-elf-stable-ubuntu24-v1
 
-      # ---- CircleCI hand-off -------------------------------------------------
-      # CircleCI pulls this branch over SSH (its checkout key), so no tokens there.
       - name: Check if toolchain-cache branch exists
         id: branch
         env:
@@ -84,14 +81,12 @@ jobs:
           cd "$OUT"
           tar -C /opt/toolchains/dc -cf - sh-elf | zstd -19 -T0 | split -b 90M -d - sh-elf.tar.zst.part-
           sha256sum sh-elf.tar.zst.part-* > SHA256SUMS
-          ls -lh
           git init -q -b toolchain-cache
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add .
           git commit -qm "SH-4 toolchain from ${GITHUB_SHA::7} [skip ci]"
           git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" toolchain-cache
-      # ------------------------------------------------------------------------
 
       - name: Build KallistiOS
         run: |
@@ -99,9 +94,6 @@ jobs:
           cd "$KOS_BASE"
           make -j"$(nproc)"
 
-      # The ROM never goes in the log. Either commit smw.sfc to a PRIVATE repo, or commit
-      # smw.sfc.gpg (gpg --symmetric --cipher-algo AES256 smw.sfc) and put the passphrase in
-      # the SMW_ROM_PASSPHRASE secret. (A plain secret is capped at 48 KB; the ROM is 512 KB.)
       - name: Get the game ROM
         env:
           SMW_ROM_PASSPHRASE: ${{ secrets.SMW_ROM_PASSPHRASE }}
@@ -111,7 +103,7 @@ jobs:
           elif [ -f smw.sfc.gpg ] && [ -n "$SMW_ROM_PASSPHRASE" ]; then
             gpg --batch --yes --pinentry-mode loopback --passphrase "$SMW_ROM_PASSPHRASE" -o smw.sfc -d smw.sfc.gpg
           else
-            echo "::error::No ROM: add smw.sfc (private repo) or smw.sfc.gpg + SMW_ROM_PASSPHRASE secret"
+            echo "::error::No ROM: add smw.sfc or smw.sfc.gpg + SMW_ROM_PASSPHRASE secret"
             exit 1
           fi
 
