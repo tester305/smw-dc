@@ -10,6 +10,7 @@
 #include <dc/pvr/pvr_regs.h>
 #include <dc/pvr.h>
 #include <dc/pvr/pvr_mem.h>
+#include <dc/pvr/pvr_misc.h>
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
 #include <dc/sound/sound.h>
@@ -80,9 +81,9 @@ static void dc_pvr_present(const uint16_t *img, int screen_w, int screen_h) {
   sprite.bx = right; sprite.by = top;    sprite.bz = 1.0f;
   sprite.cx = right; sprite.cy = bottom; sprite.cz = 1.0f;
   sprite.dx = left;  sprite.dy = bottom;
-  sprite.auv = 0x00000000u;
-  sprite.buv = 0xFFFF0000u;
-  sprite.cuv = 0xFFFFE000u;
+  sprite.auv = PVR_PACK_16BIT_UV(0.0f, 0.0f);
+  sprite.buv = PVR_PACK_16BIT_UV(1.0f, 0.0f);
+  sprite.cuv = PVR_PACK_16BIT_UV(1.0f, 0.875f);
   pvr_prim(&sprite, sizeof(sprite));
   pvr_list_finish();
   pvr_scene_finish();
