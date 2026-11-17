@@ -32,35 +32,52 @@ KOS_INIT_FLAGS(INIT_DEFAULT);
 
 static int g_vmu_fs_ready;
 
-/* Experimental PVR2 textured-quad presentation. */
+/* Experimental PVR2 textured-quad presentation with two GPU texture slots.
+   The SH-4 still produces the SNES RGB565 frame, but alternating PVR RAM textures
+   lets the CPU upload the next frame while the PVR2 can still be drawing the last
+   one. A slot is never overwritten until its previous scene has completed. */
 #define PVR_FRAME_TEX_W 256
 #define PVR_FRAME_TEX_H 256
-static pvr_ptr_t g_frame_texture;
-static pvr_sprite_hdr_t g_frame_sprite_header;
+#define PVR_FRAME_TEX_BYTES (PVR_FRAME_TEX_W * PVR_FRAME_TEX_H * 2)
+#define PVR_FRAME_SLOTS 2
+static pvr_ptr_t g_frame_texture[PVR_FRAME_SLOTS];
+static pvr_sprite_hdr_t g_frame_sprite_header[PVR_FRAME_SLOTS];
+static uint8_t g_frame_slot_pending[PVR_FRAME_SLOTS];
+static unsigned g_frame_slot;
 static int g_pvr_ready;
-static int g_pvr_frame_submitted;
 
 static int dc_pvr_present_init(void) {
   if (g_pvr_ready) return 0;
   if (pvr_init_defaults() < 0) return -1;
-  g_frame_texture = pvr_mem_malloc(PVR_FRAME_TEX_W * PVR_FRAME_TEX_H * 2);
-  if (!g_frame_texture) {
-    pvr_shutdown();
-    return -1;
+  for (int i = 0; i < PVR_FRAME_SLOTS; ++i) {
+    g_frame_texture[i] = pvr_mem_malloc(PVR_FRAME_TEX_BYTES);
+    if (!g_frame_texture[i]) {
+      for (int j = 0; j < i; ++j) pvr_mem_free(g_frame_texture[j]);
+      pvr_shutdown();
+      return -1;
+    }
+    pvr_sprite_cxt_t cxt;
+    pvr_sprite_cxt_txr(&cxt, PVR_LIST_OP_POLY,
+                       PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED,
+                       PVR_FRAME_TEX_W, PVR_FRAME_TEX_H,
+                       g_frame_texture[i], PVR_FILTER_NONE);
+    pvr_sprite_compile(&g_frame_sprite_header[i], &cxt);
   }
-  pvr_sprite_cxt_t cxt;
-  pvr_sprite_cxt_txr(&cxt, PVR_LIST_OP_POLY,
-                     PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED,
-                     PVR_FRAME_TEX_W, PVR_FRAME_TEX_H,
-                     g_frame_texture, PVR_FILTER_NONE);
-  pvr_sprite_compile(&g_frame_sprite_header, &cxt);
+  memset(g_frame_slot_pending, 0, sizeof(g_frame_slot_pending));
+  g_frame_slot = 0;
   g_pvr_ready = 1;
   return 0;
 }
 
 static void dc_pvr_present(const uint16_t *img, int screen_w, int screen_h) {
-  if (g_pvr_frame_submitted) pvr_wait_render_done();
-  pvr_txr_load(img, g_frame_texture, PVR_FRAME_TEX_W * PVR_FRAME_TEX_H * 2);
+  const unsigned slot = g_frame_slot;
+  /* This slot was used two frames ago. Wait only when that specific allocation
+     is still referenced by an in-flight scene; the other slot can stay in use. */
+  if (g_frame_slot_pending[slot]) {
+    pvr_wait_render_done();
+    memset(g_frame_slot_pending, 0, sizeof(g_frame_slot_pending));
+  }
+  pvr_txr_load(img, g_frame_texture[slot], PVR_FRAME_TEX_BYTES);
 
   int scale = screen_w / 256;
   if (scale > screen_h / 224) scale = screen_h / 224;
@@ -73,7 +90,7 @@ static void dc_pvr_present(const uint16_t *img, int screen_w, int screen_h) {
   pvr_wait_ready();
   pvr_scene_begin();
   pvr_list_begin(PVR_LIST_OP_POLY);
-  pvr_prim(&g_frame_sprite_header, sizeof(g_frame_sprite_header));
+  pvr_prim(&g_frame_sprite_header[slot], sizeof(g_frame_sprite_header[slot]));
   pvr_sprite_txr_t sprite;
   memset(&sprite, 0, sizeof(sprite));
   sprite.flags = PVR_CMD_VERTEX_EOL;
@@ -87,7 +104,8 @@ static void dc_pvr_present(const uint16_t *img, int screen_w, int screen_h) {
   pvr_prim(&sprite, sizeof(sprite));
   pvr_list_finish();
   pvr_scene_finish();
-  g_pvr_frame_submitted = 1;
+  g_frame_slot_pending[slot] = 1;
+  g_frame_slot = (slot + 1u) % PVR_FRAME_SLOTS;
 }
 
 static snd_stream_hnd_t g_stream = -1;
@@ -426,12 +444,14 @@ void dc_shutdown(void) {
      would mirror the double-init problem. */
   g_vmu_fs_ready = 0;
   if (g_pvr_ready) {
-    if (g_pvr_frame_submitted) pvr_wait_render_done();
-    if (g_frame_texture) pvr_mem_free(g_frame_texture);
-    g_frame_texture = NULL;
+    pvr_wait_render_done();
+    for (int i = 0; i < PVR_FRAME_SLOTS; ++i) {
+      if (g_frame_texture[i]) pvr_mem_free(g_frame_texture[i]);
+      g_frame_texture[i] = NULL;
+    }
     pvr_shutdown();
     g_pvr_ready = 0;
-    g_pvr_frame_submitted = 0;
+    memset(g_frame_slot_pending, 0, sizeof(g_frame_slot_pending));
   }
 }
 
