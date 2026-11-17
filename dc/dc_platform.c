@@ -8,6 +8,8 @@
 #include <arch/timer.h>
 #include <dc/video.h>
 #include <dc/pvr/pvr_regs.h>
+#include <dc/pvr.h>
+#include <dc/pvr/pvr_mem.h>
 #include <dc/maple.h>
 #include <dc/maple/controller.h>
 #include <dc/sound/sound.h>
@@ -28,6 +30,64 @@ KOS_INIT_FLAGS(INIT_DEFAULT);
 #define INTEGER_SCALE 1
 
 static int g_vmu_fs_ready;
+
+/* Experimental PVR2 textured-quad presentation. */
+#define PVR_FRAME_TEX_W 256
+#define PVR_FRAME_TEX_H 256
+static pvr_ptr_t g_frame_texture;
+static pvr_sprite_hdr_t g_frame_sprite_header;
+static int g_pvr_ready;
+static int g_pvr_frame_submitted;
+
+static int dc_pvr_present_init(void) {
+  if (g_pvr_ready) return 0;
+  if (pvr_init_defaults() < 0) return -1;
+  g_frame_texture = pvr_mem_malloc(PVR_FRAME_TEX_W * PVR_FRAME_TEX_H * 2);
+  if (!g_frame_texture) {
+    pvr_shutdown();
+    return -1;
+  }
+  pvr_sprite_cxt_t cxt;
+  pvr_sprite_cxt_txr(&cxt, PVR_LIST_OP_POLY,
+                     PVR_TXRFMT_RGB565 | PVR_TXRFMT_NONTWIDDLED,
+                     PVR_FRAME_TEX_W, PVR_FRAME_TEX_H,
+                     g_frame_texture, PVR_FILTER_NONE);
+  pvr_sprite_compile(&g_frame_sprite_header, &cxt);
+  g_pvr_ready = 1;
+  return 0;
+}
+
+static void dc_pvr_present(const uint16_t *img, int screen_w, int screen_h) {
+  if (g_pvr_frame_submitted) pvr_wait_render_done();
+  pvr_txr_load(img, g_frame_texture, PVR_FRAME_TEX_W * PVR_FRAME_TEX_H * 2);
+
+  int scale = screen_w / 256;
+  if (scale > screen_h / 224) scale = screen_h / 224;
+  if (scale < 1) scale = 1;
+  const float left = (float)((screen_w - 256 * scale) / 2);
+  const float top = (float)((screen_h - 224 * scale) / 2);
+  const float right = left + (float)(256 * scale);
+  const float bottom = top + (float)(224 * scale);
+
+  pvr_wait_ready();
+  pvr_scene_begin();
+  pvr_list_begin(PVR_LIST_OP_POLY);
+  pvr_prim(&g_frame_sprite_header, sizeof(g_frame_sprite_header));
+  pvr_sprite_txr_t sprite;
+  memset(&sprite, 0, sizeof(sprite));
+  sprite.flags = PVR_CMD_VERTEX_EOL;
+  sprite.ax = left;  sprite.ay = top;    sprite.az = 1.0f;
+  sprite.bx = right; sprite.by = top;    sprite.bz = 1.0f;
+  sprite.cx = right; sprite.cy = bottom; sprite.cz = 1.0f;
+  sprite.dx = left;  sprite.dy = bottom;
+  sprite.auv = 0x00000000u;
+  sprite.buv = 0xFFFF0000u;
+  sprite.cuv = 0xFFFFE000u;
+  pvr_prim(&sprite, sizeof(sprite));
+  pvr_list_finish();
+  pvr_scene_finish();
+  g_pvr_frame_submitted = 1;
+}
 
 static snd_stream_hnd_t g_stream = -1;
 static dc_audio_fill_fn g_fill;
@@ -65,13 +125,16 @@ int dc_init(void) {
   return 0;
 }
 
-/* Software-scale the 256x224 RGB565 image directly into the video framebuffer.
-   This deliberately avoids the PVR path so the front-end is visible on boot. */
+/* Use the PVR2 for final textured-quad scaling. Keep the old CPU scaler
+   as a fallback if the PVR cannot be initialized by a particular emulator. */
 void dc_present(const uint16_t *img) {
   if (!img || !vid_mode || !vram_s) return;
-
   const int screen_w = (int)vid_mode->width;
   const int screen_h = (int)vid_mode->height;
+  if (dc_pvr_present_init() == 0) {
+    dc_pvr_present(img, screen_w, screen_h);
+    return;
+  }
   int scale = screen_w / 256;
   if (scale > screen_h / 224) scale = screen_h / 224;
   if (scale < 1) scale = 1;
@@ -80,12 +143,10 @@ void dc_present(const uint16_t *img) {
   const int left = (screen_w - draw_w) / 2;
   const int top = (screen_h - draw_h) / 2;
   uint16_t *fb = (uint16_t *)vram_s;
-
   for (int y = 0; y < draw_h; ++y) {
     const uint16_t *src = img + (y / scale) * 256;
     uint16_t *dst = fb + (top + y) * screen_w + left;
-    for (int x = 0; x < draw_w; ++x)
-      dst[x] = src[x / scale];
+    for (int x = 0; x < draw_w; ++x) dst[x] = src[x / scale];
   }
 }
 
@@ -363,6 +424,14 @@ void dc_shutdown(void) {
      itself after main() returns (arch_auto_shutdown). Shutting it down twice
      would mirror the double-init problem. */
   g_vmu_fs_ready = 0;
+  if (g_pvr_ready) {
+    if (g_pvr_frame_submitted) pvr_wait_render_done();
+    if (g_frame_texture) pvr_mem_free(g_frame_texture);
+    g_frame_texture = NULL;
+    pvr_shutdown();
+    g_pvr_ready = 0;
+    g_pvr_frame_submitted = 0;
+  }
 }
 
 void dc_fatal(const char *msg) {
