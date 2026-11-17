@@ -48,3 +48,10 @@ Hold-and-press **A+B+X+Y** (without Start) toggles a timing overlay: logic ms x1
 * Cartridge SRAM is stored as a BIOS-visible VMU package at `/vmu/a1/SMW.SRM` (controller port 1, VMU slot 1). The VMU must be formatted and have enough free blocks. If no save exists, the game starts fresh.
 * Player 2 is read from the second Dreamcast controller and feeds SMW's native second joypad input. As in the original game, two-player mode alternates turns; it is not simultaneous co-op.
 * Upstream also contains the All-Stars SMB1 / Lost Levels reimplementations (not built here).
+
+
+## Experimental PVR2 presentation branch
+
+The branch `experiment/pvr2-gpu-frame-present` adds an experimental KallistiOS PowerVR2 presentation path. The SNES reimplementation still renders its 256x224 RGB565 frame on the SH-4; the frame is uploaded to a 256x256 RGB565 texture in PVR RAM and the PVR draws a textured quad to scale it to the display. The boot/menu path remains on the existing framebuffer, and the original CPU scaler remains as a fallback if PVR initialization fails.
+
+This is GPU-assisted presentation, not a GPU port of the SNES PPU or game logic. Texture upload still consumes memory bandwidth, and the current single-texture implementation waits for the previous PVR render before reusing texture memory. Build and benchmark this branch on Flycast and hardware before treating it as faster or merging it.
