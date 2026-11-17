@@ -370,7 +370,7 @@ int main(int argc, char **argv) {
 
   const uint64_t kFrameUs = 16667;
   int show_perf = 0, skip_now = 0;
-  uint32_t logic_us = 0, draw_us = 0, skipped = 0;
+  uint32_t logic_us = 0, draw_us = 0, present_us = 0, skipped = 0;
 
   while (!quit) {
     uint64_t t0 = dc_time_us();
@@ -398,9 +398,12 @@ int main(int argc, char **argv) {
         DrawNumber(4, 4, (int)(logic_us / 100), 0xFFFF);
         DrawNumber(4, 18, (int)(draw_us / 100), 0x07FF);
         DrawNumber(4, 32, (int)skipped, 0xFFE0);
+        DrawNumber(4, 46, (int)(present_us / 100), 0xF81F);
       }
+      uint64_t tp = dc_time_us();
       dc_present(g_my_pixels);
       uint64_t t3 = dc_time_us();
+      present_us = (uint32_t)(t3 - tp);
       /* Include presentation/upload overhead in the frame budget too. */
       skip_now = (t3 - t0) > (kFrameUs - 1200);
     } else {
